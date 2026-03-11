@@ -38,14 +38,6 @@ import {
   onAuthStateChanged 
 } from 'firebase/auth';
 
-// --- Firebase Configuration ---
-// HINWEIS: Wenn du die App lokal nutzt, ersetze diesen Block durch deine eigenen Firebase-Daten
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCkkwwicLEYX2EcdBpMtuyXRSZB35AaR0o",
   authDomain: "ruesssuugerstorage.firebaseapp.com",
