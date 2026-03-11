@@ -15,7 +15,7 @@ import {
   CheckCircle2, 
   Clock, 
   Camera, 
-  Image as ImageIcon, 
+  ImageIcon, 
   AlertTriangle 
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -37,19 +37,29 @@ import {
 } from 'firebase/auth';
 
 // ========================================================
-// FIREBASE KONFIGURATION
+// FIREBASE KONFIGURATION & INITIALISIERUNG
 // ========================================================
-const firebaseConfig = {
-  apiKey: "AIzaSyCkkwwicLEYX2EcdBpMtuyXRSZB35AaR0o",
-  authDomain: "ruesssuugerstorage.firebaseapp.com",
-  databaseURL: "https://ruesssuugerstorage-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "ruesssuugerstorage",
-  storageBucket: "ruesssuugerstorage.firebasestorage.app",
-  messagingSenderId: "268045537391",
-  appId: "1:268045537391:web:3b30913efcf97ee6fe3d9a"
+const getFirebaseConfig = () => {
+  try {
+    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+      return JSON.parse(__firebase_config);
+    }
+  } catch (e) {
+    console.error("Fehler beim Parsen der System-Konfiguration", e);
+  }
+  // Fallback auf deine Projektdaten
+  return {
+    apiKey: "AIzaSyCkkwwicLEYX2EcdBpMtuyXRSZB35AaR0o",
+    authDomain: "ruesssuugerstorage.firebaseapp.com",
+    databaseURL: "https://ruesssuugerstorage-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "ruesssuugerstorage",
+    storageBucket: "ruesssuugerstorage.firebasestorage.app",
+    messagingSenderId: "268045537391",
+    appId: "1:268045537391:web:3b30913efcf97ee6fe3d9a"
+  };
 };
 
-// Sichere Initialisierung (verhindert Mehrfach-Initialisierung)
+const firebaseConfig = getFirebaseConfig();
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -81,7 +91,7 @@ export default function App() {
     image: null
   });
 
-  // 1. Authentifizierung (Sicherheits-Check)
+  // 1. Authentifizierung mit Fallback-Logik (Regel 3)
   useEffect(() => {
     let isMounted = true;
     
@@ -90,17 +100,17 @@ export default function App() {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           try {
             await signInWithCustomToken(auth, __initial_auth_token);
-          } catch (e) {
-            console.warn("Token-Fehler, versuche anonym...");
+          } catch (tokenErr) {
+            console.warn("Custom Token fehlgeschlagen (Mismatch?), wechsle zu anonym...", tokenErr.message);
             await signInAnonymously(auth);
           }
         } else {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Auth-Fehler:", err);
+        console.error("Kritischer Auth-Fehler:", err);
         if (isMounted) {
-          setError("Authentifizierung fehlgeschlagen. Bitte prüfe, ob 'Anonyme Anmeldung' in Firebase aktiviert ist.");
+          setError(`Verbindung fehlgeschlagen: ${err.message}. Bitte prüfe die Firebase-Einstellungen.`);
         }
       } finally {
         if (isMounted) setAuthAttempted(true);
@@ -115,16 +125,25 @@ export default function App() {
       }
     });
 
+    // Timeout für Ladebildschirm (Sicherheitsnetz)
+    const timer = setTimeout(() => {
+      if (isMounted && loading && !error) {
+        console.warn("Lade-Timeout erreicht.");
+      }
+    }, 8000);
+
     return () => {
       isMounted = false;
       unsubscribe();
+      clearTimeout(timer);
     };
   }, []);
 
-  // 2. Daten-Synchronisation
+  // 2. Daten-Synchronisation (Regel 1 & 2)
   useEffect(() => {
     if (!user || !authAttempted) return;
 
+    // Pfad nach Regel 1: /artifacts/{appId}/public/data/inventory
     const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
     const q = query(inventoryRef);
 
@@ -136,11 +155,11 @@ export default function App() {
       setItems(itemsData);
       setLoading(false);
     }, (err) => {
-      console.error("Firestore Error:", err);
+      console.error("Firestore Fehler:", err);
       if (err.code === 'permission-denied') {
         setError("Zugriff verweigert. Bitte prüfe deine Firestore-Regeln.");
       } else {
-        setError("Daten konnten nicht geladen werden.");
+        setError(`Datenfehler: ${err.message}`);
       }
       setLoading(false);
     });
@@ -184,7 +203,7 @@ export default function App() {
       setIsModalOpen(false);
     } catch (err) { 
       console.error(err);
-      setError("Speichern fehlgeschlagen. Datenbank-Verbindung prüfen."); 
+      setError("Speichern fehlgeschlagen. Bitte prüfe die Internetverbindung."); 
     }
   };
 
@@ -199,15 +218,19 @@ export default function App() {
         updatedAt: new Date().toISOString()
       });
     } catch (err) {
-      setError("Menge konnte nicht aktualisiert werden.");
+      setError("Menge konnte nicht geändert werden.");
     }
   };
 
   const toggleStatus = async (id, currentStatus) => {
     if (!user) return;
     const newStatus = currentStatus === 'Verfügbar' ? 'Ausgeliehen' : 'Verfügbar';
-    const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
-    await updateDoc(itemRef, { status: newStatus });
+    try {
+      const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
+      await updateDoc(itemRef, { status: newStatus });
+    } catch (err) {
+      setError("Status konnte nicht geändert werden.");
+    }
   };
 
   const filteredItems = useMemo(() => {
@@ -218,12 +241,12 @@ export default function App() {
     }).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }, [items, searchTerm, filterLocation]);
 
-  // Lade-Screen (nur zeigen wenn Auth noch läuft und kein Error da ist)
+  // Lade-Screen
   if (!authAttempted && !error) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4">
-        <Loader2 className="w-10 h-10 text-orange-500 animate-spin mb-4" />
-        <p className="text-gray-500 font-bold tracking-widest uppercase text-[10px]">Verbindung wird aufgebaut...</p>
+        <Loader2 className="w-12 h-12 text-orange-500 animate-spin mb-6" />
+        <p className="text-gray-500 font-bold tracking-widest uppercase text-[10px] animate-pulse">Verbindung zu RüssSuuger Cloud...</p>
       </div>
     );
   }
@@ -236,21 +259,21 @@ export default function App() {
           <AlertCircle className="w-10 h-10 text-red-500" />
         </div>
         <h2 className="text-white font-black uppercase tracking-tighter text-xl mb-4 italic">Verbindungs-Fehler</h2>
-        <div className="max-w-xs bg-red-950/10 border border-red-900/20 p-4 rounded-2xl mb-8">
+        <div className="max-w-xs bg-red-950/10 border border-red-900/20 p-5 rounded-3xl mb-8">
           <p className="text-red-400 text-xs font-medium leading-relaxed">{error}</p>
         </div>
         <button 
           onClick={() => window.location.reload()} 
-          className="bg-orange-600 hover:bg-orange-500 px-8 py-3 rounded-2xl text-white font-black uppercase tracking-widest text-xs transition-all active:scale-95 shadow-xl shadow-orange-900/20"
+          className="bg-orange-600 hover:bg-orange-500 px-10 py-4 rounded-2xl text-white font-black uppercase tracking-widest text-xs transition-all active:scale-95 shadow-xl shadow-orange-900/20"
         >
-          Nochmals versuchen
+          Neu laden
         </button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30 pb-10">
+    <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30 pb-12">
       <header className="border-b border-gray-800 bg-[#111]/90 backdrop-blur-md sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
         <div className="flex items-baseline gap-1">
           <span className="text-xl font-black text-gray-500 uppercase tracking-tighter">Rüss</span>
@@ -271,7 +294,7 @@ export default function App() {
             <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
             <input 
               type="text" 
-              placeholder="Inventar durchsuchen..." 
+              placeholder="Suche im Bastelraum..." 
               className="w-full bg-[#161616] border border-gray-800 rounded-2xl py-3.5 pl-12 pr-4 outline-none focus:border-orange-500/50 text-white shadow-inner" 
               value={searchTerm} 
               onChange={(e) => setSearchTerm(e.target.value)} 
@@ -282,9 +305,9 @@ export default function App() {
               <button 
                 key={loc}
                 onClick={() => setFilterLocation(loc)} 
-                className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/20' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}
+                className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/20' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}
               >
-                {loc === 'All' ? 'Alle' : loc}
+                {loc === 'All' ? 'Alle Räume' : loc}
               </button>
             ))}
           </div>
@@ -293,12 +316,12 @@ export default function App() {
         {loading ? (
           <div className="text-center py-20">
              <Loader2 className="w-8 h-8 text-orange-500 animate-spin mx-auto mb-4" />
-             <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">Daten werden geladen...</p>
+             <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">Bestand wird synchronisiert...</p>
           </div>
         ) : filteredItems.length === 0 ? (
           <div className="text-center py-24 bg-[#0d0d0d] rounded-[3rem] border-2 border-dashed border-gray-800">
-            <Package className="mx-auto w-16 h-16 text-gray-800 mb-4" />
-            <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">Nichts gefunden</p>
+            <Package className="mx-auto w-16 h-16 text-gray-800 mb-4" strokeWidth={1} />
+            <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">Keine Treffer</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -330,7 +353,7 @@ export default function App() {
                   <div className="mt-auto bg-black/40 p-4 rounded-3xl border border-gray-800/50 flex items-center justify-between shadow-inner">
                     <button onClick={() => updateQuantity(item.id, -1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 active:scale-90 transition-all text-gray-400"><Minus size={18}/></button>
                     <div className="text-center">
-                      <span className={`text-3xl font-black tracking-tighter ${item.quantity <= item.minStock ? 'text-red-500 animate-pulse' : 'text-orange-500'}`}>{item.quantity}</span>
+                      <span className={`text-3xl font-black tracking-tighter ${item.quantity <= (item.minStock || 0) ? 'text-red-500 animate-pulse' : 'text-orange-500'}`}>{item.quantity}</span>
                       <span className="block text-[8px] text-gray-600 uppercase font-bold tracking-widest mt-0.5">Stück</span>
                     </div>
                     <button onClick={() => updateQuantity(item.id, 1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 active:scale-90 transition-all text-gray-400"><Plus size={18}/></button>
@@ -338,7 +361,7 @@ export default function App() {
                   
                   <button 
                     onClick={() => toggleStatus(item.id, item.status)} 
-                    className={`mt-5 w-full py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 ${item.status === 'Ausgeliehen' ? 'bg-orange-600/10 text-orange-500 border border-orange-500/20 hover:bg-orange-600/20' : 'bg-gray-800/40 text-gray-600 border border-transparent hover:bg-gray-800/80 hover:text-gray-400'}`}
+                    className={`mt-5 w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 ${item.status === 'Ausgeliehen' ? 'bg-orange-600/10 text-orange-500 border border-orange-500/20 hover:bg-orange-600/20' : 'bg-gray-800/40 text-gray-600 border border-transparent hover:bg-gray-800/80 hover:text-gray-400'}`}
                   >
                     {item.status === 'Ausgeliehen' ? 'Verfügbar machen' : 'Ausgeliehen markieren'}
                   </button>
@@ -374,20 +397,20 @@ export default function App() {
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Bezeichnung</label>
-                <input required type="text" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50 transition-all placeholder:text-gray-700" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="z.B. Klebeband..." />
+                <input required type="text" className="w-full bg-black p-5 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50 transition-all placeholder:text-gray-800 shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="Was ist es?" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Anzahl</label>
+                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Startmenge</label>
                   <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Warnung ab</label>
+                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Warnlimit</label>
                   <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Ort</label>
+                <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Lagerort</label>
                 <div className="grid grid-cols-2 gap-3">
                   <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'bg-black text-gray-700 border border-gray-800'}`}>Bastelraum</button>
                   <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${newItem.location === 'Archivraum' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' : 'bg-black text-gray-700 border border-gray-800'}`}>Archiv</button>
@@ -407,7 +430,7 @@ export default function App() {
             <h3 className="text-xl font-black mb-4 italic text-white uppercase tracking-tighter">Wirklich löschen?</h3>
             <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig entfernen?</p>
             <div className="flex gap-4">
-              <button onClick={() => setItemToDelete(null)} className="flex-1 bg-gray-800 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-gray-400 hover:text-white transition-colors">Abbrechen</button>
+              <button onClick={() => setItemToDelete(null)} className="flex-1 bg-gray-800 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-gray-400 hover:text-white transition-colors">Abbruch</button>
               <button onClick={async () => {
                 try {
                   const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id);
