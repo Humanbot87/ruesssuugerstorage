@@ -1,1 +1,63 @@
-<script type="module" src="/src/App.jsx"></script>
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
+  <title>RüssSuuger Ämme Storage</title>
+  <!-- Tailwind CSS für das Design -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { 
+      margin: 0; 
+      background-color: #0a0a0a; 
+      color: #e5e7eb; 
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    * { -webkit-tap-highlight-color: transparent; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    
+    /* Lade-Animation */
+    .loader {
+      border: 3px solid #222;
+      border-top: 3px solid #f97316;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .loading-text {
+      margin-top: 24px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: -0.05em;
+      font-size: 1.5rem;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <!-- Dieser Ladebildschirm wird angezeigt, bis React bereit ist -->
+    <div style="display: flex; height: 100vh; flex-direction: column; align-items: center; justify-content: center; background-color: #0a0a0a;">
+      <div class="loader"></div>
+      
+      <div class="loading-text">
+        <span style="color: #6b7280;">Rüss</span><span style="color: #f97316;">Suuger</span> <span style="color: #9ca3af; font-style: normal; font-size: 0.8rem; letter-spacing: 0.2em; margin-left: 4px;">Ämme</span>
+      </div>
+      
+      <p style="margin-top: 12px; color: #444; font-size: 10px; text-transform: uppercase; letter-spacing: 0.2em; font-weight: bold;">
+        Lager wird gestartet...
+      </p>
+    </div>
+  </div>
+  
+  <!-- WICHTIG: Stelle sicher, dass deine Datei auf GitHub im Ordner 'src' exakt 'App.jsx' heißt -->
+  <script type="module" src="/src/App.jsx"></script>
+</body>
+</html>
