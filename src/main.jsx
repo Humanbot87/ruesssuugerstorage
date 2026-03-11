@@ -36,7 +36,7 @@ import {
   onAuthStateChanged 
 } from 'firebase/auth';
 
-// --- Firebase Konfiguration (KORRIGIERT) ---
+// --- Firebase Konfiguration ---
 const firebaseConfig = {
   apiKey: "AIzaSyCkkwwicLEYX2EcdBpMtuyXRSZB35AaR0o",
   authDomain: "ruesssuugerstorage.firebaseapp.com",
@@ -50,11 +50,15 @@ const firebaseConfig = {
 // App-ID für die Pfadstruktur (Regel 1 konform)
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'ruess-suuger-storage-v1';
 
-// Firebase Initialisierung
+// Firebase Initialisierung (Vermeidung von Doppel-Initialisierung)
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+/**
+ * Hauptanwendung: RüssSuuger Ämme Storage
+ * Wichtig: "export default" ist notwendig für die Canvas-Vorschau.
+ */
 export default function App() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -82,6 +86,7 @@ export default function App() {
     
     const initAuth = async () => {
       try {
+        // Falls ein Token vom System bereitgestellt wird, diesen nutzen
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           try {
             await signInWithCustomToken(auth, __initial_auth_token);
@@ -89,6 +94,7 @@ export default function App() {
             await signInAnonymously(auth);
           }
         } else {
+          // Standard: Anonyme Anmeldung
           await signInAnonymously(auth);
         }
       } catch (err) {
@@ -98,15 +104,14 @@ export default function App() {
     };
 
     initAuth();
+    
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (isMounted) {
         setUser(u);
-        if (!u) {
-          // Falls Auth hängen bleibt, erzwinge nach 5s einen Timeout-Fehler
-          setTimeout(() => {
-            if (isMounted && !auth.currentUser) setLoading(false);
-          }, 5000);
-        }
+        // Sicherheits-Timeout: Falls keine Daten kommen, Ladebildschirm nach 6s beenden
+        setTimeout(() => {
+          if (isMounted) setLoading(false);
+        }, 6000);
       }
     });
 
@@ -116,11 +121,11 @@ export default function App() {
     };
   }, []);
 
-  // 2. Daten-Synchronisation (Echtzeit)
+  // 2. Daten-Synchronisation (Echtzeit aus Firestore)
   useEffect(() => {
     if (!user) return;
 
-    // Pfad: /artifacts/{appId}/public/data/inventory
+    // Pfadstruktur nach Regel 1: /artifacts/{appId}/public/data/inventory
     const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
     const q = query(inventoryRef);
 
@@ -187,7 +192,6 @@ export default function App() {
     if (!user || !newItem.name) return;
 
     try {
-      // Die Datenbank wird hier "automatisch" erstellt, sobald das erste Dokument geschrieben wird
       const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
       await addDoc(inventoryRef, {
         ...newItem,
@@ -259,15 +263,17 @@ export default function App() {
     }).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }, [items, searchTerm, filterLocation]);
 
+  // Ladebildschirm
   if (loading && !error) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4">
         <Loader2 className="w-12 h-12 text-orange-500 animate-spin mb-4" />
-        <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Lager-Cloud wird synchronisiert...</p>
+        <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px] animate-pulse italic">Lager-Cloud wird synchronisiert...</p>
       </div>
     );
   }
 
+  // Fehleranzeige
   if (error) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-8 text-center">
@@ -276,7 +282,7 @@ export default function App() {
         <div className="bg-red-900/10 border border-red-900/20 p-6 rounded-3xl max-w-sm mb-6 text-red-400 text-xs">
           {error}
         </div>
-        <button onClick={() => window.location.reload()} className="bg-orange-600 px-10 py-4 rounded-2xl text-white font-black uppercase tracking-widest text-xs shadow-xl shadow-orange-900/20">
+        <button onClick={() => window.location.reload()} className="bg-orange-600 px-10 py-4 rounded-2xl text-white font-black uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-all">
           Neu laden
         </button>
       </div>
@@ -292,7 +298,7 @@ export default function App() {
             <span className="text-2xl font-black text-orange-500 uppercase tracking-tighter">Suuger</span>
             <span className="text-2xl font-black text-gray-500 ml-2 uppercase tracking-tighter italic text-xs">Ämme</span>
           </div>
-          <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all active:scale-95 shadow-lg">
+          <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-orange-900/20">
             <PlusCircle size={20} />
             <span className="hidden sm:inline font-bold text-xs uppercase tracking-widest">Neuer Artikel</span>
           </button>
@@ -403,7 +409,7 @@ export default function App() {
               
               <div className="space-y-2">
                 <label className="block text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Bezeichnung</label>
-                <input required type="text" className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white focus:border-orange-500/50 transition-all outline-none" value={newItem.name} onChange={(e) => setNewItem({...newItem, name: e.target.value})} placeholder="z.B. Schminke, Klebeband..." />
+                <input required type="text" className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white focus:border-orange-500/50 transition-all outline-none placeholder:text-gray-800" value={newItem.name} onChange={(e) => setNewItem({...newItem, name: e.target.value})} placeholder="z.B. Schminke, Klebeband..." />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -434,12 +440,12 @@ export default function App() {
       {itemToDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/98 backdrop-blur-xl transition-all">
           <div className="bg-[#1a1a1a] border border-red-900/20 w-full max-w-sm rounded-[3.5rem] p-10 text-center shadow-2xl animate-in fade-in zoom-in duration-300">
-            <div className="w-20 h-20 bg-red-950/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6"><AlertTriangle size={40} /></div>
+            <div className="w-20 h-20 bg-red-950/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={40} /></div>
             <h2 className="text-xl font-black text-white mb-2 italic uppercase tracking-tighter">Wirklich löschen?</h2>
             <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig entfernen?</p>
             <div className="grid grid-cols-2 gap-4">
-              <button onClick={() => setItemToDelete(null)} className="py-4 rounded-2xl bg-gray-800 text-gray-400 font-black uppercase text-[10px] tracking-widest">Nein</button>
-              <button onClick={confirmDelete} className="py-4 rounded-2xl bg-red-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg active:scale-95 transition-all">Ja, löschen</button>
+              <button onClick={() => setItemToDelete(null)} className="py-4 rounded-2xl bg-gray-800 text-gray-400 font-black uppercase text-[10px] tracking-widest hover:text-white transition-colors">Nein</button>
+              <button onClick={confirmDelete} className="py-4 rounded-2xl bg-red-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg shadow-red-900/30 active:scale-95 transition-all">Ja, löschen</button>
             </div>
           </div>
         </div>
