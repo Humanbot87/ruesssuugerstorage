@@ -62,6 +62,7 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'ruess-suuger-storage
 export default function App() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [authAttempted, setAuthAttempted] = useState(false);
   const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -80,7 +81,7 @@ export default function App() {
     image: null
   });
 
-  // 1. Authentifizierung (Regel: Auth vor Queries)
+  // 1. Authentifizierung (Sicherheits-Check)
   useEffect(() => {
     let isMounted = true;
     
@@ -90,19 +91,28 @@ export default function App() {
           try {
             await signInWithCustomToken(auth, __initial_auth_token);
           } catch (e) {
+            console.warn("Token-Fehler, versuche anonym...");
             await signInAnonymously(auth);
           }
         } else {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        if (isMounted) setError("Verbindung zum Server fehlgeschlagen.");
+        console.error("Auth-Fehler:", err);
+        if (isMounted) {
+          setError("Authentifizierung fehlgeschlagen. Bitte prüfe, ob 'Anonyme Anmeldung' in Firebase aktiviert ist.");
+        }
+      } finally {
+        if (isMounted) setAuthAttempted(true);
       }
     };
 
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (u) => {
-      if (isMounted) setUser(u);
+      if (isMounted) {
+        setUser(u);
+        if (u) setError(null);
+      }
     });
 
     return () => {
@@ -113,7 +123,7 @@ export default function App() {
 
   // 2. Daten-Synchronisation
   useEffect(() => {
-    if (!user) return;
+    if (!user || !authAttempted) return;
 
     const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
     const q = query(inventoryRef);
@@ -127,12 +137,16 @@ export default function App() {
       setLoading(false);
     }, (err) => {
       console.error("Firestore Error:", err);
-      setError("Daten konnten nicht geladen werden.");
+      if (err.code === 'permission-denied') {
+        setError("Zugriff verweigert. Bitte prüfe deine Firestore-Regeln.");
+      } else {
+        setError("Daten konnten nicht geladen werden.");
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, authAttempted]);
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -168,18 +182,25 @@ export default function App() {
       });
       setNewItem({ name: '', quantity: 1, location: 'Bastelraum', category: 'Allgemein', minStock: 0, status: 'Verfügbar', image: null });
       setIsModalOpen(false);
-    } catch (err) { setError("Speichern fehlgeschlagen."); }
+    } catch (err) { 
+      console.error(err);
+      setError("Speichern fehlgeschlagen. Datenbank-Verbindung prüfen."); 
+    }
   };
 
   const updateQuantity = async (id, delta) => {
     if (!user) return;
     const item = items.find(i => i.id === id);
     if (!item) return;
-    const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
-    await updateDoc(itemRef, { 
-      quantity: Math.max(0, (item.quantity || 0) + delta),
-      updatedAt: new Date().toISOString()
-    });
+    try {
+      const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
+      await updateDoc(itemRef, { 
+        quantity: Math.max(0, (item.quantity || 0) + delta),
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      setError("Menge konnte nicht aktualisiert werden.");
+    }
   };
 
   const toggleStatus = async (id, currentStatus) => {
@@ -197,12 +218,12 @@ export default function App() {
     }).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }, [items, searchTerm, filterLocation]);
 
-  // Lade-Screen
-  if (loading && !error) {
+  // Lade-Screen (nur zeigen wenn Auth noch läuft und kein Error da ist)
+  if (!authAttempted && !error) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4">
         <Loader2 className="w-10 h-10 text-orange-500 animate-spin mb-4" />
-        <p className="text-gray-500 font-bold tracking-widest uppercase text-[10px]">Lager wird geladen...</p>
+        <p className="text-gray-500 font-bold tracking-widest uppercase text-[10px]">Verbindung wird aufgebaut...</p>
       </div>
     );
   }
@@ -211,10 +232,19 @@ export default function App() {
   if (error) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-8 text-center">
-        <AlertCircle className="w-16 h-16 text-red-500 mb-4" />
-        <h2 className="text-white font-bold mb-2">Hoppla!</h2>
-        <p className="text-gray-500 text-sm mb-6">{error}</p>
-        <button onClick={() => window.location.reload()} className="bg-orange-600 px-6 py-2 rounded-xl text-white font-bold text-sm">Neu laden</button>
+        <div className="w-20 h-20 bg-red-950/20 rounded-full flex items-center justify-center mb-6">
+          <AlertCircle className="w-10 h-10 text-red-500" />
+        </div>
+        <h2 className="text-white font-black uppercase tracking-tighter text-xl mb-4 italic">Verbindungs-Fehler</h2>
+        <div className="max-w-xs bg-red-950/10 border border-red-900/20 p-4 rounded-2xl mb-8">
+          <p className="text-red-400 text-xs font-medium leading-relaxed">{error}</p>
+        </div>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="bg-orange-600 hover:bg-orange-500 px-8 py-3 rounded-2xl text-white font-black uppercase tracking-widest text-xs transition-all active:scale-95 shadow-xl shadow-orange-900/20"
+        >
+          Nochmals versuchen
+        </button>
       </div>
     );
   }
@@ -241,7 +271,7 @@ export default function App() {
             <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
             <input 
               type="text" 
-              placeholder="Suchen..." 
+              placeholder="Inventar durchsuchen..." 
               className="w-full bg-[#161616] border border-gray-800 rounded-2xl py-3.5 pl-12 pr-4 outline-none focus:border-orange-500/50 text-white shadow-inner" 
               value={searchTerm} 
               onChange={(e) => setSearchTerm(e.target.value)} 
@@ -252,7 +282,7 @@ export default function App() {
               <button 
                 key={loc}
                 onClick={() => setFilterLocation(loc)} 
-                className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 text-white' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}
+                className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/20' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}
               >
                 {loc === 'All' ? 'Alle' : loc}
               </button>
@@ -260,7 +290,12 @@ export default function App() {
           </div>
         </div>
 
-        {filteredItems.length === 0 ? (
+        {loading ? (
+          <div className="text-center py-20">
+             <Loader2 className="w-8 h-8 text-orange-500 animate-spin mx-auto mb-4" />
+             <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">Daten werden geladen...</p>
+          </div>
+        ) : filteredItems.length === 0 ? (
           <div className="text-center py-24 bg-[#0d0d0d] rounded-[3rem] border-2 border-dashed border-gray-800">
             <Package className="mx-auto w-16 h-16 text-gray-800 mb-4" />
             <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">Nichts gefunden</p>
@@ -339,7 +374,7 @@ export default function App() {
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Bezeichnung</label>
-                <input required type="text" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50 transition-all placeholder:text-gray-800" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="z.B. Klebeband..." />
+                <input required type="text" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50 transition-all placeholder:text-gray-700" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="z.B. Klebeband..." />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -374,9 +409,11 @@ export default function App() {
             <div className="flex gap-4">
               <button onClick={() => setItemToDelete(null)} className="flex-1 bg-gray-800 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-gray-400 hover:text-white transition-colors">Abbrechen</button>
               <button onClick={async () => {
-                const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id);
-                await deleteDoc(itemRef);
-                setItemToDelete(null);
+                try {
+                  const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id);
+                  await deleteDoc(itemRef);
+                  setItemToDelete(null);
+                } catch (e) { setError("Löschen fehlgeschlagen."); }
               }} className="flex-1 bg-red-600 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-white shadow-lg shadow-red-900/30 active:scale-95 transition-all">Löschen</button>
             </div>
           </div>
