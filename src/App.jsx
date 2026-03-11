@@ -103,20 +103,29 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     const fullName = `${authForm.firstName.trim()} ${authForm.lastName.trim()}`;
-    const isMainAdmin = fullName.toLowerCase() === 'raphael drago';
+    
+    // Zuerst prüfen, ob das Mitglied existiert
     const existingMember = members.find(m => m.fullName.toLowerCase() === fullName.toLowerCase());
-
-    if (isMainAdmin && (!existingMember || !existingMember.isInitialized)) {
-      setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
-      setAuthStep('setup_password');
-      return;
-    }
 
     if (existingMember) {
       setTargetMember(existingMember);
-      setAuthStep(existingMember.isInitialized ? 'login' : 'setup_password');
+      // Wenn das Mitglied bereits initialisiert ist, gehe zum Login
+      if (existingMember.isInitialized) {
+        setAuthStep('login');
+      } else {
+        // Wenn es auf der Liste steht, aber noch kein Passwort hat
+        setAuthStep('setup_password');
+      }
     } else {
-      setAuthError("Name nicht auf der Liste. Raphael Drago muss dich zuerst erfassen.");
+      // Wenn das Mitglied NICHT auf der Liste steht
+      const isMainAdmin = fullName.toLowerCase() === 'raphael drago';
+      if (isMainAdmin) {
+        // Falls Raphael Drago noch gar nicht in der Datenbank steht (Initialer Setup)
+        setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
+        setAuthStep('setup_password');
+      } else {
+        setAuthError("Name nicht auf der Liste. Raphael Drago muss dich zuerst erfassen.");
+      }
     }
   };
 
@@ -139,7 +148,7 @@ export default function App() {
         await signInWithEmailAndPassword(auth, email, authForm.password);
       }
     } catch (err) {
-      setAuthError("Fehler: " + err.message);
+      setAuthError("Passwort falsch oder technischer Fehler.");
     }
   };
 
