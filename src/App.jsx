@@ -442,6 +442,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* Hinzufügen Button oberhalb der Artikel */}
         <button onClick={() => setIsModalOpen(true)} className="w-full flex items-center justify-center gap-3 bg-orange-600/10 border border-orange-500/20 hover:bg-orange-600/20 p-5 rounded-3xl transition-all mb-8 group shadow-xl">
           <PlusCircle className="text-orange-500 group-hover:scale-110 transition-transform" />
           <span className="font-black uppercase tracking-widest text-orange-500 text-xs italic">Neuer Artikel erfassen</span>
@@ -577,7 +578,7 @@ export default function App() {
               <div className="space-y-4 pb-4">
                 <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3>
                 <div className="grid gap-2">
-                  {members?.map(m => (
+                  {(members || []).map(m => (
                     <div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group">
                       <div>
                         <p className="font-bold text-sm text-white">{m.fullName || "Unbekannt"}</p>
@@ -638,7 +639,9 @@ export default function App() {
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Warn-Limit</label>
-                  <input type="number" className="w-full h-[52px] bg-black p-3 rounded-xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                  <div className="h-[52px]">
+                    <input type="number" className="w-full h-full bg-black p-3 rounded-xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                  </div>
                 </div>
               </div>
 
@@ -664,7 +667,7 @@ export default function App() {
           <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
             <div className="w-20 h-20 bg-red-950/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={48} /></div>
             <h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight text-center leading-none">Löschen?</h3>
-            <p className="text-gray-600 text-sm mb-10 leading-relaxed text-center">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig entfernen?</p>
+            <p className="text-gray-600 text-sm mb-10 leading-relaxed text-center">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich endgültig entfernen?</p>
             <div className="grid grid-cols-2 gap-4">
               <button onClick={() => setItemToDelete(null)} className="bg-gray-800 py-4 rounded-2xl font-bold text-gray-400 hover:text-white transition-all shadow-lg font-black uppercase text-[10px]">Nein</button>
               <button onClick={async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id)); setItemToDelete(null); }} className="bg-red-600 py-4 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all font-black uppercase text-[10px]">Ja, löschen</button>
