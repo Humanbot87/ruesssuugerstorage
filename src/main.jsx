@@ -86,12 +86,18 @@ export default function App() {
       try {
         // Zuerst Custom Token prüfen, dann anonym (Pflichtregel)
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+          try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } catch (tokenError) {
+            // Falls mismatch oder ungültig, Fallback auf anonyme Anmeldung
+            console.warn("Custom Token fehlgeschlagen, versuche anonyme Anmeldung...", tokenError.code);
+            await signInAnonymously(auth);
+          }
         } else {
           await signInAnonymously(auth);
         }
       } catch (error) {
-        console.error("Auth-Fehler:", error);
+        console.error("Kritischer Auth-Fehler:", error);
       }
     };
 
