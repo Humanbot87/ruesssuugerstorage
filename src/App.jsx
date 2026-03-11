@@ -3,7 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { 
   Plus, Minus, Search, Package, Trash2, PlusCircle, X, Loader2, 
   AlertCircle, LogOut, KeyRound, ShieldCheck, FileSpreadsheet, 
-  Users, ChevronRight, UserPlus, ShieldAlert, ImageIcon, Camera, AlertTriangle, History
+  Users, ChevronRight, UserPlus, ShieldAlert, ImageIcon, Camera, AlertTriangle, History,
+  ArrowRightLeft, RotateCcw
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
@@ -145,23 +146,34 @@ export default function App() {
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemId);
     const logEntry = {
       user: user.displayName,
-      action: type, // 'entnommen' oder 'ausgelegt'
+      action: type, // 'entnommen', 'ausgelegt', 'ausgeliehen', 'zurückgebracht'
       amount: Math.abs(diff),
       timestamp: new Date().toISOString()
     };
+    
+    let actionText = "";
+    if (type === 'ausgeliehen') actionText = `${user.displayName} hat ${logEntry.amount} Stk. ausgeliehen`;
+    else if (type === 'zurückgebracht') actionText = `${user.displayName} hat ${logEntry.amount} Stk. zurückgebracht`;
+    else actionText = `${user.displayName} hat ${logEntry.amount} Stk. ${type}`;
+
     await updateDoc(itemRef, {
       updatedBy: user.displayName,
       updatedAt: new Date().toISOString(),
-      lastAction: `${user.displayName} hat ${logEntry.amount} Stk. ${type}`,
+      lastAction: actionText,
       history: arrayUnion(logEntry)
     });
   };
 
-  const updateQty = async (item, delta) => {
+  const updateQty = async (item, delta, specificType = null) => {
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id);
     const newQty = Math.max(0, item.quantity + delta);
     await updateDoc(itemRef, { quantity: newQty });
-    await logMovement(item.id, delta > 0 ? 'ausgelegt' : 'entnommen', delta);
+    
+    let type = specificType;
+    if (!type) {
+        type = delta > 0 ? 'ausgelegt' : 'entnommen';
+    }
+    await logMovement(item.id, type, delta);
   };
 
   const analyzeImageWithAI = async (base64Data) => {
@@ -199,7 +211,9 @@ export default function App() {
         <div className="w-full max-w-sm bg-[#161616] border border-gray-800 p-8 rounded-[2.5rem] shadow-2xl">
           <div className="text-center mb-8">
              <Package className="mx-auto text-orange-500 mb-4" size={48} />
-             <h1 className="text-2xl font-black uppercase italic tracking-tighter text-white">Rüss<span className="text-orange-500">Suuger</span></h1>
+             <h1 className="text-2xl font-black uppercase italic tracking-tighter text-white">
+               <span className="text-gray-500">Rüss</span><span className="text-orange-500">Suuger</span>
+             </h1>
              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2 italic">Cloud-Inventar v2</p>
           </div>
           <form onSubmit={authStep === 'identify' ? handleIdentify : handleAuthAction} className="space-y-4">
@@ -232,7 +246,9 @@ export default function App() {
     <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans">
       <header className="border-b border-gray-800 bg-[#111] sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
         <div className="flex flex-col">
-          <h1 className="text-lg font-black uppercase italic tracking-tighter leading-none text-orange-500">RüssSuuger</h1>
+          <h1 className="text-lg font-black uppercase italic tracking-tighter leading-none">
+            <span className="text-gray-500">Rüss</span><span className="text-orange-500">Suuger</span>
+          </h1>
           <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest">{user.displayName} {isUserAdmin && '🛡️'}</span>
         </div>
         <div className="flex gap-2">
@@ -268,6 +284,7 @@ export default function App() {
                   <button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
                 </div>
                 <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest mb-4 italic">{item.location}</p>
+                
                 <div className="flex items-center justify-between bg-black/40 p-4 rounded-2xl border border-gray-800/50 shadow-inner">
                   <button onClick={() => updateQty(item, -1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Minus size={18}/></button>
                   <div className="text-center">
@@ -275,6 +292,22 @@ export default function App() {
                     <span className="block text-[8px] text-gray-600 font-bold uppercase mt-1">Limit: {item.minStock || 0}</span>
                   </div>
                   <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Plus size={18}/></button>
+                </div>
+
+                {/* Ausleih-Sektion */}
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                    <button 
+                        onClick={() => updateQty(item, -1, 'ausgeliehen')}
+                        className="flex items-center justify-center gap-2 bg-orange-600/10 hover:bg-orange-600/20 border border-orange-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-orange-500 transition-all active:scale-95"
+                    >
+                        <ArrowRightLeft size={12} /> Ausleihen
+                    </button>
+                    <button 
+                        onClick={() => updateQty(item, 1, 'zurückgebracht')}
+                        className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95"
+                    >
+                        <RotateCcw size={12} /> Zurück
+                    </button>
                 </div>
                 
                 {/* Protokoll-Anzeige */}
