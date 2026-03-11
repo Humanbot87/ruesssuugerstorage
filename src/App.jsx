@@ -245,10 +245,14 @@ export default function App() {
 
   const generateImageWithAI = async (itemName) => {
     try {
-      const prompt = `Ein klares, freigestelltes Produktfoto von ${itemName} auf neutralem, hellem Hintergrund. Professionell ausgeleuchtet.`;
+      const promptText = `Ein klares, freigestelltes Produktfoto von ${itemName} auf neutralem, hellem Hintergrund. Professionell ausgeleuchtet.`;
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
         method: 'POST',
-        body: JSON.stringify({ instances: { prompt }, parameters: { sampleCount: 1 } })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          instances: { prompt: promptText }, 
+          parameters: { sampleCount: 1 } 
+        })
       });
       const result = await response.json();
       if (result.predictions?.[0]?.bytesBase64Encoded) {
