@@ -29,7 +29,9 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = "ruess-suuger-storage-v1";
+
+// appId auf v2 gesetzt für einen frischen Datenbank-Reset
+const appId = "ruess-suuger-storage-v2";
 
 const apiKey = ""; // Gemini API Key wird automatisch injiziert
 
@@ -67,6 +69,7 @@ export default function App() {
         if (userDoc.exists()) {
           setUserData(userDoc.data());
         } else if (u.displayName === 'Raphael Drago') {
+          // Fallback für den Admin bei Erst-Anmeldung
           setUserData({ role: 'admin', fullName: 'Raphael Drago' });
         }
         setUser(u);
@@ -92,26 +95,28 @@ export default function App() {
     return () => { invUnsub(); memUnsub(); };
   }, [user]);
 
-  const getInternalEmail = (name) => `${name.toLowerCase().trim().replace(/\s+/g, '.')}@rs.storage`;
+  const getInternalEmail = (name) => `${name.toLowerCase().trim().replace(/\s+/g, '.')}@rs.v2`;
 
   const handleIdentify = async (e) => {
     e.preventDefault();
     setAuthError('');
     const fullName = `${authForm.firstName.trim()} ${authForm.lastName.trim()}`;
     
-    // Initialer Admin-Check (falls DB leer ist)
-    if (fullName === 'Raphael Drago' && members.length === 0) {
+    // Robuste Admin-Initialisierung für Raphael Drago
+    const isMainAdmin = fullName.toLowerCase() === 'raphael drago';
+    const existingMember = members.find(m => m.fullName.toLowerCase() === fullName.toLowerCase());
+
+    if (isMainAdmin && (!existingMember || !existingMember.isInitialized)) {
       setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
       setAuthStep('setup_password');
       return;
     }
 
-    const memberMatch = members.find(m => m.fullName.toLowerCase() === fullName.toLowerCase());
-    if (memberMatch) {
-      setTargetMember(memberMatch);
-      setAuthStep(memberMatch.isInitialized ? 'login' : 'setup_password');
+    if (existingMember) {
+      setTargetMember(existingMember);
+      setAuthStep(existingMember.isInitialized ? 'login' : 'setup_password');
     } else {
-      setAuthError("Du bist noch nicht auf der Mitgliederliste. Bitte kontaktiere Raphael Drago.");
+      setAuthError("Name nicht auf der Liste. Raphael Drago muss dich zuerst erfassen.");
     }
   };
 
@@ -122,10 +127,11 @@ export default function App() {
 
     try {
       if (authStep === 'setup_password') {
-        // Erst-Login: Account erstellen
+        // Erst-Login: Registrierung bei Firebase Auth
         const userCredential = await createUserWithEmailAndPassword(auth, email, authForm.password);
         await updateProfile(userCredential.user, { displayName: targetMember.fullName });
         
+        // Dokument in der Registry anlegen oder aktualisieren
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', userCredential.user.uid), {
           fullName: targetMember.fullName,
           uid: userCredential.user.uid,
@@ -135,7 +141,7 @@ export default function App() {
           createdAt: serverTimestamp()
         });
         
-        // Lösche Platzhalter-Eintrag (ID-Wechsel auf UID)
+        // Falls ein Platzhalter-Eintrag existierte, diesen entfernen
         if (targetMember.id && targetMember.id !== userCredential.user.uid) {
             await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', targetMember.id));
         }
@@ -144,17 +150,16 @@ export default function App() {
         await signInWithEmailAndPassword(auth, email, authForm.password);
       }
     } catch (err) {
-      console.error("Auth Error Code:", err.code);
-      if (err.code === 'auth/wrong-password') {
-        setAuthError("Falsches Passwort. Bitte versuche es erneut.");
-      } else if (err.code === 'auth/invalid-credential') {
-        setAuthError("Login fehlgeschlagen. Passwort prüfen.");
+      console.error("Auth Error:", err.code, err.message);
+      if (err.code === 'auth/email-already-in-use') {
+        setAuthError("Konto existiert bereits. Bitte normal einloggen.");
+        setAuthStep('login');
       } else if (err.code === 'auth/weak-password') {
-        setAuthError("Das Passwort muss mindestens 6 Zeichen lang sein.");
-      } else if (err.code === 'auth/email-already-in-use') {
-        setAuthError("Dieses Mitglied ist bereits registriert. Bitte nutze den normalen Login.");
+        setAuthError("Passwort zu schwach (min. 6 Zeichen).");
+      } else if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setAuthError("Passwort nicht korrekt.");
       } else {
-        setAuthError("Technischer Fehler: " + err.message);
+        setAuthError("Fehler: " + err.message);
       }
     }
   };
@@ -167,7 +172,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: "Was ist das? Antworte nur mit dem Namen des Gegenstands (max 3 Wörter)." }, { inlineData: { mimeType: "image/jpeg", data: pureBase64 } }] }]
+          contents: [{ parts: [{ text: "Was ist auf diesem Bild? Antworte nur mit dem Namen des Gegenstands (max 3 Wörter)." }, { inlineData: { mimeType: "image/jpeg", data: pureBase64 } }] }]
         })
       });
       const result = await response.json();
@@ -188,7 +193,7 @@ export default function App() {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.setAttribute("download", `Inventar_Export_${new Date().toLocaleDateString()}.csv`);
+    link.setAttribute("download", `Lager_Export_${new Date().toLocaleDateString()}.csv`);
     link.click();
   };
 
@@ -201,7 +206,7 @@ export default function App() {
           <div className="text-center mb-8">
              <Package className="mx-auto text-orange-500 mb-4" size={48} />
              <h1 className="text-2xl font-black uppercase italic tracking-tighter text-white">Rüss<span className="text-orange-500">Suuger</span></h1>
-             <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2 italic">Lager Verwaltung</p>
+             <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2 italic">Cloud-Inventar v2</p>
           </div>
           <form onSubmit={authStep === 'identify' ? handleIdentify : handleAuthAction} className="space-y-4">
             {authStep === 'identify' ? (
@@ -214,7 +219,7 @@ export default function App() {
                 <p className="text-xs text-orange-500 font-bold text-center mb-4 uppercase tracking-tighter">Hallo {targetMember.fullName}</p>
                 <div className="relative">
                   <KeyRound className="absolute left-4 top-4 text-gray-700" size={18} />
-                  <input required autoFocus type="password" placeholder={authStep === 'setup_password' ? "Neues Passwort wählen" : "Passwort eingeben"} className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
+                  <input required autoFocus type="password" placeholder={authStep === 'setup_password' ? "Wähle ein neues Passwort" : "Passwort eingeben"} className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
                 </div>
               </div>
             )}
@@ -225,7 +230,7 @@ export default function App() {
               </div>
             )}
             <button type="submit" className="w-full bg-orange-600 p-4 rounded-2xl font-black uppercase text-white shadow-lg active:scale-95 transition-all">
-              {authStep === 'identify' ? 'Weiter' : (authStep === 'setup_password' ? 'Passwort setzen' : 'Anmelden')}
+              {authStep === 'identify' ? 'Prüfen' : (authStep === 'setup_password' ? 'Konto aktivieren' : 'Anmelden')}
             </button>
             {authStep !== 'identify' && (
               <button type="button" onClick={() => {setAuthStep('identify'); setAuthError('');}} className="w-full text-gray-600 text-[10px] font-bold uppercase hover:text-white transition-colors mt-2">Abbrechen</button>
@@ -246,7 +251,7 @@ export default function App() {
           <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest">{user.displayName} {isUserAdmin && '🛡️'}</span>
         </div>
         <div className="flex gap-2">
-          {isUserAdmin && <button onClick={() => setIsAdminPanelOpen(true)} className="p-2.5 bg-gray-800 rounded-xl text-orange-500 hover:bg-orange-500 hover:text-white transition-all"><Users size={20}/></button>}
+          {isUserAdmin && <button onClick={() => setIsAdminPanelOpen(true)} className="p-2.5 bg-gray-800 rounded-xl text-orange-500 hover:bg-orange-500 hover:text-white transition-all shadow-lg"><Users size={20}/></button>}
           <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 p-2.5 rounded-xl text-white shadow-lg active:scale-95 transition-all"><Plus size={20}/></button>
           <button onClick={() => signOut(auth)} className="bg-gray-800 p-2.5 rounded-xl text-gray-500 hover:text-red-500 transition-all"><LogOut size={20}/></button>
         </div>
@@ -256,12 +261,12 @@ export default function App() {
         <div className="flex flex-col gap-4 mb-8">
           <div className="relative">
             <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
-            <input type="text" placeholder="Inventar durchsuchen..." className="w-full bg-[#161616] p-4 pl-12 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 transition-all" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <input type="text" placeholder="Gegenstand suchen..." className="w-full bg-[#161616] p-4 pl-12 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 transition-all" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
           <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
             {['All', 'Bastelraum', 'Archivraum'].map(loc => (
               <button key={loc} onClick={() => setFilterLocation(loc)} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 border-orange-500 text-white shadow-lg shadow-orange-900/20' : 'bg-gray-800/50 border-gray-800 text-gray-500'}`}>
-                {loc === 'All' ? 'Alle Standorte' : loc}
+                {loc === 'All' ? 'Alle Räume' : loc}
               </button>
             ))}
           </div>
@@ -272,7 +277,7 @@ export default function App() {
             <div key={item.id} className="bg-[#161616] rounded-3xl overflow-hidden border border-gray-800 shadow-xl group hover:border-gray-700 transition-all">
               <div className="h-44 bg-black flex items-center justify-center relative overflow-hidden border-b border-gray-800/50">
                 {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={item.name} /> : <ImageIcon className="text-gray-900 opacity-30" size={64} />}
-                {item.quantity <= (item.minStock || 0) && <div className="absolute top-2 left-2 bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter">Nachfüllen</div>}
+                {item.quantity <= (item.minStock || 0) && <div className="absolute top-2 left-2 bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter shadow-lg">Nachfüllen</div>}
               </div>
               <div className="p-5">
                 <div className="flex justify-between items-start mb-1">
@@ -313,11 +318,11 @@ export default function App() {
             </div>
             <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar">
               <button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl shadow-green-900/10">
-                <FileSpreadsheet size={24} /> Inventar Exportieren (CSV)
+                <FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)
               </button>
               
               <div className="space-y-4 pt-4 border-t border-gray-800">
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied hinzufügen</h3>
+                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3>
                 <form onSubmit={async (e) => {
                   e.preventDefault();
                   const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`;
@@ -333,14 +338,14 @@ export default function App() {
               </div>
 
               <div className="space-y-4">
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederliste</h3>
+                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3>
                 <div className="grid gap-2">
                   {members.map(m => (
                     <div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all">
                       <div>
                         <p className="font-bold text-sm text-white">{m.fullName}</p>
                         <p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>
-                          {m.isInitialized ? 'Aktiv' : 'Wartet auf Erst-Login'}
+                          {m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}
                         </p>
                       </div>
                       <div className="flex gap-2">
@@ -395,7 +400,7 @@ export default function App() {
                   reader.readAsDataURL(file);
                 }} />
               </div>
-              <input required placeholder="Bezeichnung (z.B. Schminkkoffer)..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 transition-all shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+              <input required placeholder="Bezeichnung..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 transition-all shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
               <div className="grid grid-cols-2 gap-4">
                 <input type="number" placeholder="Anzahl" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 transition-all shadow-inner" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
                 <input type="number" placeholder="Warnlimit" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 transition-all shadow-inner" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
@@ -415,7 +420,7 @@ export default function App() {
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in duration-300">
           <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
             <div className="w-20 h-20 bg-red-950/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={48} /></div>
-            <h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight">Lager-Gegenstand löschen?</h3>
+            <h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight">Gegenstand löschen?</h3>
             <p className="text-gray-600 text-sm mb-10 leading-relaxed">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich endgültig entfernen?</p>
             <div className="grid grid-cols-2 gap-4">
               <button onClick={() => setItemToDelete(null)} className="bg-gray-800 py-4 rounded-2xl font-bold text-gray-400 hover:text-white transition-all shadow-lg">Nein</button>
