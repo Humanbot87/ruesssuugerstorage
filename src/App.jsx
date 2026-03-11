@@ -29,7 +29,8 @@ import {
   Info,
   ShieldCheck,
   Users,
-  KeyRound
+  KeyRound,
+  FileSpreadsheet
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
@@ -128,7 +129,6 @@ export default function App() {
           setUserData(null);
           setAuthStep('identify');
           setTargetMember(null);
-          setAuthForm({ firstName: '', lastName: '', password: '' });
         }
       } catch (err) {
         console.error("Auth error:", err);
@@ -338,7 +338,7 @@ export default function App() {
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4 text-center">
       <Loader2 className="w-12 h-12 text-orange-500 animate-spin mb-4" />
-      <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Synchronisierung läuft...</p>
+      <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Lager-Cloud wird synchronisiert...</p>
     </div>
   );
 
@@ -442,7 +442,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Hinzufügen Button oberhalb der Artikel */}
         <button onClick={() => setIsModalOpen(true)} className="w-full flex items-center justify-center gap-3 bg-orange-600/10 border border-orange-500/20 hover:bg-orange-600/20 p-5 rounded-3xl transition-all mb-8 group shadow-xl">
           <PlusCircle className="text-orange-500 group-hover:scale-110 transition-transform" />
           <span className="font-black uppercase tracking-widest text-orange-500 text-xs italic">Neuer Artikel erfassen</span>
@@ -493,7 +492,7 @@ export default function App() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2 mt-4">
-                          <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={quantity <= 0} className="flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border border-orange-500/20 text-orange-500 hover:bg-orange-500/10 disabled:opacity-30">Ausleihen</button>
+                          <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={quantity <= 0} className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border border-orange-500/20 text-orange-500 hover:bg-orange-500/10 disabled:opacity-30`}>Ausleihen</button>
                           <button onClick={() => updateQty(item, 0, 'zurückgebracht')} disabled={!item.borrowedQuantity} className="flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase bg-green-600/10 border border-green-500/20 text-green-500 hover:bg-green-600/20 disabled:opacity-30">Zurück</button>
                       </div>
 
@@ -549,8 +548,8 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <ShieldCheck className="text-orange-500" size={24} />
                 <div>
-                   <h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight text-white">Admin Control</h2>
-                   <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Vereins-Stammdaten</p>
+                   <h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight text-white">Stammdaten</h2>
+                   <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Vereins-Management</p>
                 </div>
               </div>
               <button onClick={() => setIsAdminPanelOpen(false)} className="bg-gray-800 p-3 rounded-2xl hover:bg-gray-700 transition-colors"><X size={20}/></button>
@@ -562,7 +561,7 @@ export default function App() {
               </button>
               
               <div className="space-y-4 pt-4 border-t border-gray-800">
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3>
+                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied hinzufügen</h3>
                 <form onSubmit={async (e) => {
                   e.preventDefault();
                   const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`;
@@ -571,14 +570,14 @@ export default function App() {
                 }} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500 transition-all" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} />
                   <input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500 transition-all" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} />
-                  <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button>
+                  <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Hinzufügen</button>
                 </form>
               </div>
 
               <div className="space-y-4 pb-4">
                 <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3>
                 <div className="grid gap-2">
-                  {members.map(m => (
+                  {members?.map(m => (
                     <div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group">
                       <div>
                         <p className="font-bold text-sm text-white">{m.fullName || "Unbekannt"}</p>
@@ -622,30 +621,33 @@ export default function App() {
               </div>
               
               <div className="space-y-2">
-                <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Name & Tags</label>
-                <input required placeholder="Bezeichnung..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
-                <input placeholder="Tags (z.B. Schminke, Neon)..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 shadow-inner text-xs" value={newItem.tags} onChange={e => setNewItem({...newItem, tags: e.target.value})} />
+                <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Bezeichnung & Tags</label>
+                <input required placeholder="Name des Artikels..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 shadow-inner transition-all" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+                <input placeholder="Tags (z.B. Schminke, Neon)..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 shadow-inner text-xs transition-all" value={newItem.tags} onChange={e => setNewItem({...newItem, tags: e.target.value})} />
               </div>
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Anzahl & Einheit</label>
-                  <div className="flex gap-2">
-                    <input type="number" className="flex-1 bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
-                    <select className="bg-black p-4 rounded-2xl border border-gray-800 text-white text-xs outline-none" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})}>
+                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Bestand</label>
+                  <div className="flex gap-2 h-[52px]">
+                    <input type="number" className="flex-1 bg-black p-3 rounded-xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
+                    <select className="w-20 bg-black px-2 rounded-xl border border-gray-800 text-white text-[10px] outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})}>
                       {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                     </select>
                   </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Warn-Limit</label>
-                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                  <input type="number" className="w-full h-[52px] bg-black p-3 rounded-xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Bastelraum' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Bastelraum</button>
-                <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Archivraum' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Archiv</button>
+              <div className="space-y-2">
+                <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Standort</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Bastelraum' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Bastelraum</button>
+                  <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Archivraum' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Archiv</button>
+                </div>
               </div>
               
               <button type="submit" disabled={isSaving} className="w-full bg-orange-600 p-5 rounded-3xl font-black uppercase text-white shadow-xl shadow-orange-900/40 hover:bg-orange-500 active:scale-95 transition-all mt-4 italic tracking-widest leading-none disabled:opacity-50">
@@ -659,10 +661,10 @@ export default function App() {
       {/* --- DELETE DIALOG --- */}
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl shadow-red-900/10">
+          <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
             <div className="w-20 h-20 bg-red-950/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={48} /></div>
-            <h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight text-center leading-none">Wirklich löschen?</h3>
-            <p className="text-gray-600 text-sm mb-10 leading-relaxed text-center">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich endgültig entfernen?</p>
+            <h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight text-center leading-none">Löschen?</h3>
+            <p className="text-gray-600 text-sm mb-10 leading-relaxed text-center">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig entfernen?</p>
             <div className="grid grid-cols-2 gap-4">
               <button onClick={() => setItemToDelete(null)} className="bg-gray-800 py-4 rounded-2xl font-bold text-gray-400 hover:text-white transition-all shadow-lg font-black uppercase text-[10px]">Nein</button>
               <button onClick={async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id)); setItemToDelete(null); }} className="bg-red-600 py-4 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all font-black uppercase text-[10px]">Ja, löschen</button>
