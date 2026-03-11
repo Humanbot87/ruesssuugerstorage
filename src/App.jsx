@@ -3,7 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { 
   Plus, Minus, Search, Package, Archive, Hammer, Trash2, 
   PlusCircle, X, Loader2, AlertCircle, User, CheckCircle2, 
-  Clock, Camera, Image as ImageIcon, AlertTriangle, LogOut, Key, Settings, ShieldCheck, UserCheck
+  Clock, Camera, Image as ImageIcon, AlertTriangle, LogOut, Key, Settings, ShieldCheck, UserCheck,
+  ArrowLeft, Download, FileSpreadsheet
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
@@ -122,7 +123,6 @@ export default function App() {
         const userCredential = await createUserWithEmailAndPassword(auth, email, authForm.password);
         const u = userCredential.user;
         
-        // Admin-Rechte für Raphael Drago vergeben
         const role = (fn.toLowerCase() === 'raphael' && ln.toLowerCase() === 'drago') ? 'admin' : 'member';
 
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), {
@@ -161,6 +161,33 @@ export default function App() {
     } catch (err) { alert("Fehler: " + err.message); }
   };
 
+  // --- Excel Export Logik ---
+  const exportToExcel = () => {
+    const headers = ["Name", "Anzahl", "Lagerort", "Warnlimit", "Status", "Letzte Änderung von", "Datum"];
+    const rows = items.map(item => [
+      item.name,
+      item.quantity,
+      item.location,
+      item.minStock,
+      item.status,
+      item.lastActionBy || item.createdBy || "Unbekannt",
+      item.updatedAt ? new Date(item.updatedAt).toLocaleDateString('de-CH') : ""
+    ]);
+
+    // CSV Format mit Semikolon (für deutsches Excel)
+    let csvContent = "data:text/csv;charset=utf-8," 
+      + headers.join(";") + "\n" 
+      + rows.map(e => e.join(";")).join("\n");
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `RüssSuuger_Inventar_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // --- Daten laden ---
   useEffect(() => {
     if (!user) return;
@@ -190,7 +217,8 @@ export default function App() {
     const item = items.find(i => i.id === id);
     if (!item) return;
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id), {
-      quantity: Math.max(0, (item.quantity || 0) + d)
+      quantity: Math.max(0, (item.quantity || 0) + d),
+      updatedAt: new Date().toISOString()
     });
   };
 
@@ -285,20 +313,37 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30">
       <header className="border-b border-gray-800 bg-[#111]/95 backdrop-blur-md sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
-        <h1 className="text-xl font-black uppercase italic flex items-baseline gap-0">
-          <span style={{ color: '#6b7280' }}>Rüss</span><span style={{ color: '#f97316' }}>Suuger</span> 
-          <span style={{ color: '#6b7280' }} className="ml-1.5 text-[10px] not-italic tracking-[0.2em]">ÄMME</span>
-        </h1>
+        <div className="flex items-center gap-3">
+          {/* Zurück Button im Header */}
+          {activeTab !== 'inventory' && (
+            <button 
+              onClick={() => setActiveTab('inventory')}
+              className="p-2 bg-gray-800 rounded-xl text-gray-300 hover:text-white transition-all active:scale-90"
+              title="Zurück zum Inventar"
+            >
+              <ArrowLeft size={20} />
+            </button>
+          )}
+          <h1 className="text-xl font-black uppercase italic flex items-baseline gap-0">
+            <span style={{ color: '#6b7280' }}>Rüss</span><span style={{ color: '#f97316' }}>Suuger</span> 
+            <span style={{ color: '#6b7280' }} className="ml-1.5 text-[10px] not-italic tracking-[0.2em]">ÄMME</span>
+          </h1>
+        </div>
+        
         <div className="flex items-center gap-2">
           {userData?.role === 'admin' && (
-            <button onClick={() => setActiveTab(activeTab === 'inventory' ? 'admin' : 'inventory')} className={`p-2.5 rounded-2xl transition-all ${activeTab === 'admin' ? 'bg-orange-600 text-white shadow-lg' : 'bg-gray-800 text-gray-400'}`}>
+            <button 
+              onClick={() => setActiveTab(activeTab === 'inventory' ? 'admin' : 'inventory')} 
+              className={`p-2.5 rounded-2xl transition-all ${activeTab === 'admin' ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/40' : 'bg-gray-800 text-gray-400'}`}
+              title="Einstellungen"
+            >
               <Settings size={24} />
             </button>
           )}
-          <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg active:scale-95 transition-all">
-            <PlusCircle size={24} />
+          <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg active:scale-95 transition-all" title="Neuer Artikel">
+            <Plus size={24} />
           </button>
-          <button onClick={() => signOut(auth)} className="bg-gray-800 hover:bg-gray-700 p-2.5 rounded-2xl text-gray-400 active:scale-95 transition-all">
+          <button onClick={() => signOut(auth)} className="bg-gray-800 hover:bg-gray-700 p-2.5 rounded-2xl text-gray-400 active:scale-95 transition-all" title="Ausloggen">
             <LogOut size={24} />
           </button>
         </div>
@@ -307,10 +352,21 @@ export default function App() {
       <main className="p-4 max-w-7xl mx-auto pb-24">
         {activeTab === 'admin' ? (
           <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="bg-[#161616] border border-gray-800 p-8 rounded-[2.5rem] shadow-xl">
-              <h2 className="text-xl font-black uppercase italic text-white mb-6 flex items-center gap-3">
-                <ShieldCheck className="text-orange-500" /> Mitglieder-Stammdaten
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+               <h2 className="text-xl font-black uppercase italic text-white flex items-center gap-3">
+                <ShieldCheck className="text-orange-500" /> Administration
               </h2>
+              {/* Excel Export Button */}
+              <button 
+                onClick={exportToExcel}
+                className="flex items-center gap-2 bg-green-700 hover:bg-green-600 text-white px-6 py-3 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg active:scale-95"
+              >
+                <FileSpreadsheet size={18} /> Excel Export (.csv)
+              </button>
+            </div>
+
+            <div className="bg-[#161616] border border-gray-800 p-8 rounded-[2.5rem] shadow-xl">
+              <h3 className="text-sm font-black uppercase text-gray-500 mb-6 tracking-widest">Mitglieder-Stammdaten hinzufügen</h3>
               <form onSubmit={handleAddMember} className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <input name="fn" required type="text" placeholder="Vorname" className="bg-black border border-gray-800 p-4 rounded-2xl text-white outline-none focus:border-orange-500" />
                 <input name="ln" required type="text" placeholder="Nachname" className="bg-black border border-gray-800 p-4 rounded-2xl text-white outline-none focus:border-orange-500" />
@@ -318,9 +374,10 @@ export default function App() {
                    <option value="member">Mitglied</option>
                    <option value="admin">Admin</option>
                 </select>
-                <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg">Registrieren</button>
+                <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg hover:bg-orange-500 transition-all">Registrieren</button>
               </form>
             </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {members.map(m => (
                 <div key={m.id} className="bg-[#111] border border-gray-800 p-5 rounded-3xl flex justify-between items-center">
@@ -355,6 +412,20 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {/* Prominenter Plus Button am Anfang der Liste */}
+              <button 
+                onClick={() => setIsModalOpen(true)}
+                className="bg-[#161616]/50 border-2 border-dashed border-gray-800 rounded-[2.5rem] p-8 flex flex-col items-center justify-center gap-4 hover:border-orange-500/50 hover:bg-orange-500/5 transition-all group min-h-[300px]"
+              >
+                <div className="w-16 h-16 bg-orange-600/10 rounded-full flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform shadow-xl">
+                  <Plus size={32} strokeWidth={3} />
+                </div>
+                <div className="text-center">
+                  <p className="text-white font-black uppercase italic tracking-tighter text-lg">Neuer Artikel</p>
+                  <p className="text-gray-600 text-[10px] uppercase font-bold tracking-widest mt-1">Hinzufügen zum Lager</p>
+                </div>
+              </button>
+
               {filtered.map(item => (
                 <div key={item.id} className={`bg-[#161616] border border-gray-800 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col group hover:border-orange-500/30 transition-all duration-500 ${item.status === 'Ausgeliehen' ? 'opacity-90' : ''}`}>
                   <div className="h-48 bg-black relative flex items-center justify-center border-b border-gray-800/50 overflow-hidden">
