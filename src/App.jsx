@@ -28,7 +28,8 @@ import {
   ShoppingCart,
   Info,
   ShieldCheck,
-  Users
+  Users,
+  KeyRound
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
@@ -110,7 +111,7 @@ export default function App() {
 
   const [newMemberName, setNewMemberName] = useState({ first: '', last: '' });
 
-  // 1. Authentifizierung
+  // 1. Authentifizierung & Nutzer-Sync
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       try {
@@ -126,6 +127,8 @@ export default function App() {
           setUser(null);
           setUserData(null);
           setAuthStep('identify');
+          setTargetMember(null);
+          setAuthForm({ firstName: '', lastName: '', password: '' });
         }
       } catch (err) {
         console.error("Auth error:", err);
@@ -136,7 +139,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Daten-Synchronisation
+  // 2. Daten-Sync
   useEffect(() => {
     if (!user) return;
     
@@ -160,19 +163,24 @@ export default function App() {
     const fullName = `${authForm.firstName.trim()} ${authForm.lastName.trim()}`;
     
     try {
-      // REGEL-KONFORM: Wir laden alle Mitglieder und filtern lokal
+      // Wir laden alle Mitglieder und filtern lokal (vermeidet Firebase Index-Probleme)
       const memberRef = collection(db, 'artifacts', appId, 'public', 'data', 'member_registry');
       const querySnapshot = await getDocs(memberRef);
       const allMembers = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       
-      const memberMatch = allMembers.find(m => m.fullName.toLowerCase() === fullName.toLowerCase());
+      const memberMatch = allMembers.find(m => (m.fullName || "").toLowerCase().trim() === fullName.toLowerCase().trim());
 
       if (memberMatch) {
         setTargetMember(memberMatch);
-        setAuthStep(memberMatch.isInitialized ? 'login' : 'setup_password');
+        // Wir setzen den Step erst nachdem targetMember sicher im State ist
+        setTimeout(() => {
+          setAuthStep(memberMatch.isInitialized ? 'login' : 'setup_password');
+        }, 50);
       } else if (fullName.toLowerCase() === 'raphael drago') {
         setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
-        setAuthStep('setup_password');
+        setTimeout(() => {
+          setAuthStep('setup_password');
+        }, 50);
       } else {
         setAuthError("Name nicht auf der Liste. Ein Admin muss dich zuerst erfassen.");
       }
@@ -185,6 +193,7 @@ export default function App() {
 
   const handleAuthAction = async (e) => {
     e.preventDefault();
+    if (!targetMember) return;
     setAuthError('');
     setIsAuthChecking(true);
     const email = getInternalEmail(targetMember.fullName);
@@ -329,49 +338,62 @@ export default function App() {
   const isUserAdmin = userData?.role === 'admin' || user?.displayName === 'Raphael Drago';
 
   if (loading) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4 text-center">
       <Loader2 className="w-12 h-12 text-orange-500 animate-spin mb-4" />
-      <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Lager-Cloud wird synchronisiert...</p>
+      <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Synchronisierung läuft...</p>
     </div>
   );
 
+  // --- LOGIN UI ---
   if (!user) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-6">
         <div className="w-full max-w-sm bg-[#161616] border border-gray-800 p-10 rounded-[3rem] shadow-2xl">
           <div className="text-center mb-10">
              <Package className="mx-auto text-orange-500 mb-4" size={52} />
-             <h1 className="text-2xl font-black uppercase italic tracking-tighter text-white">
+             <h1 className="text-2xl font-black uppercase italic tracking-tighter text-white leading-none">
                <span className="text-gray-500">Rüss</span><span className="text-orange-500">Suuger</span>
              </h1>
              <p className="text-[10px] text-gray-600 font-bold uppercase tracking-[0.3em] mt-2 italic">Lagerverwaltung</p>
           </div>
+          
           <form onSubmit={authStep === 'identify' ? handleIdentify : handleAuthAction} className="space-y-4">
             {authStep === 'identify' ? (
-              <>
+              <div className="space-y-4">
                 <input required type="text" placeholder="Vorname" className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none focus:border-orange-500 transition-all shadow-inner" value={authForm.firstName} onChange={e => setAuthForm({...authForm, firstName: e.target.value})} />
                 <input required type="text" placeholder="Nachname" className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none focus:border-orange-500 transition-all shadow-inner" value={authForm.lastName} onChange={e => setAuthForm({...authForm, lastName: e.target.value})} />
-              </>
+              </div>
             ) : (
-              <div className="space-y-2 animate-in fade-in slide-in-from-right-2">
-                <p className="text-xs text-orange-500 font-bold text-center mb-4 uppercase tracking-tighter">Hallo {targetMember?.fullName}</p>
+              <div className="space-y-4">
+                <div className="text-center py-2 bg-orange-600/10 rounded-xl border border-orange-500/20 mb-2">
+                  <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest">Hallo</p>
+                  <p className="text-white font-black">{targetMember?.fullName || "Mitglied"}</p>
+                </div>
                 <div className="relative">
                   <KeyRound className="absolute left-4 top-4 text-gray-700" size={18} />
-                  <input required autoFocus type="password" placeholder="Passwort" className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
+                  <input required autoFocus type="password" placeholder="Passwort" className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none focus:ring-1 focus:ring-orange-500" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
                 </div>
               </div>
             )}
+
             {authError && <div className="text-red-500 text-[10px] font-bold bg-red-500/10 p-3 rounded-xl border border-red-500/20 text-center">{authError}</div>}
-            <button type="submit" disabled={isAuthChecking} className="w-full bg-orange-600 p-4 rounded-2xl font-black uppercase text-white shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all">
+            
+            <button type="submit" disabled={isAuthChecking} className="w-full bg-orange-600 p-4 rounded-2xl font-black uppercase text-white shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50">
               {isAuthChecking ? <Loader2 className="animate-spin" size={18} /> : (authStep === 'identify' ? 'Weiter' : 'Anmelden')}
             </button>
-            {authStep !== 'identify' && <button type="button" onClick={() => setAuthStep('identify')} className="w-full text-gray-600 text-[10px] font-bold uppercase mt-2 hover:text-white transition-colors">Abbrechen</button>}
+
+            {authStep !== 'identify' && (
+              <button type="button" onClick={() => { setAuthStep('identify'); setAuthError(''); }} className="w-full text-gray-600 text-[10px] font-bold uppercase mt-2 hover:text-white transition-colors py-2">
+                Abbrechen
+              </button>
+            )}
           </form>
         </div>
       </div>
     );
   }
 
+  // --- DASHBOARD UI ---
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30">
       <header className="border-b border-gray-800 bg-[#111] sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
@@ -395,7 +417,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="p-4 max-w-6xl mx-auto">
+      <main className="p-4 max-w-6xl mx-auto pb-20">
         <div className="flex flex-col gap-4 mb-6">
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -422,7 +444,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Hinzufügen Button oberhalb der Artikel */}
         <button onClick={() => setIsModalOpen(true)} className="w-full flex items-center justify-center gap-3 bg-orange-600/10 border border-orange-500/20 hover:bg-orange-600/20 p-5 rounded-3xl transition-all mb-8 group shadow-xl">
           <PlusCircle className="text-orange-500 group-hover:scale-110 transition-transform" />
           <span className="font-black uppercase tracking-widest text-orange-500 text-xs italic">Neuer Artikel erfassen</span>
@@ -473,7 +494,7 @@ export default function App() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2 mt-4">
-                          <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={quantity <= 0} className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 border-orange-500/20 text-orange-500 hover:bg-orange-500/10`}>Ausleihen</button>
+                          <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={quantity <= 0} className="flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border border-orange-500/20 text-orange-500 hover:bg-orange-500/10 disabled:opacity-30">Ausleihen</button>
                           <button onClick={() => updateQty(item, 0, 'zurückgebracht')} disabled={!item.borrowedQuantity} className="flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase bg-green-600/10 border border-green-500/20 text-green-500 hover:bg-green-600/20 disabled:opacity-30">Zurück</button>
                       </div>
 
@@ -487,7 +508,7 @@ export default function App() {
               })}
             </div>
           ) : (
-            <div className="bg-[#161616] border border-gray-800 rounded-[2rem] overflow-hidden divide-y divide-gray-800 shadow-2xl mb-12">
+            <div className="bg-[#161616] border border-gray-800 rounded-[2rem] overflow-hidden divide-y divide-gray-800 shadow-2xl">
               {filteredItems.map(item => {
                 const quantity = item.quantity || 0;
                 const minStock = item.minStock || 0;
@@ -521,7 +542,7 @@ export default function App() {
         )}
       </main>
 
-      {/* ADMIN PANEL */}
+      {/* ADMIN PANEL MODAL */}
       {isAdminPanelOpen && (
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in fade-in duration-300">
           <div className="bg-[#161616] w-full max-w-2xl rounded-[2.5rem] border border-orange-500/10 shadow-2xl flex flex-col max-h-[90vh]">
@@ -540,7 +561,7 @@ export default function App() {
                 <FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)
               </button>
               <div className="space-y-4 pt-4 border-t border-gray-800">
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied hinzufügen</h3>
+                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3>
                 <form onSubmit={async (e) => {
                   e.preventDefault();
                   const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`;
@@ -614,7 +635,7 @@ export default function App() {
   );
 }
 
-// React Entry Point
+// React Bootstrapping
 const rootElement = document.getElementById('root');
 if (rootElement) {
   const root = ReactDOM.createRoot(rootElement);
