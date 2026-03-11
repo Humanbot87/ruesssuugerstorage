@@ -197,9 +197,13 @@ export default function App() {
     let newBorrowed = item.borrowedQuantity || 0;
 
     if (specificType === 'ausgeliehen') {
+        // Sicherstellen, dass nicht mehr ausgeliehen werden kann, als an Lager ist
+        if (item.quantity <= 0) return;
         newQty = Math.max(0, item.quantity - 1);
         newBorrowed += 1;
     } else if (specificType === 'zurückgebracht') {
+        // Sicherstellen, dass nicht mehr zurückgebracht wird, als ausgeliehen ist
+        if (newBorrowed <= 0) return;
         newQty += 1;
         newBorrowed = Math.max(0, newBorrowed - 1);
     } else {
@@ -411,8 +415,20 @@ export default function App() {
                                     <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Plus size={18}/></button>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 mt-3">
-                                    <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={item.quantity === 0} className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 border-orange-500/20 text-orange-500 bg-orange-600/10 hover:bg-orange-600/20`}>Ausleihen</button>
-                                    <button onClick={() => updateQty(item, 0, 'zurückgebracht')} disabled={(item.borrowedQuantity || 0) === 0} className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95 disabled:opacity-30">Zurück</button>
+                                    <button 
+                                        onClick={() => updateQty(item, 0, 'ausgeliehen')} 
+                                        disabled={item.quantity === 0} 
+                                        className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 border-orange-500/20 text-orange-500 bg-orange-600/10 hover:bg-orange-600/20`}
+                                    >
+                                        Ausleihen
+                                    </button>
+                                    <button 
+                                        onClick={() => updateQty(item, 0, 'zurückgebracht')} 
+                                        disabled={(item.borrowedQuantity || 0) === 0} 
+                                        className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95 disabled:opacity-30"
+                                    >
+                                        Zurück
+                                    </button>
                                 </div>
                                 <div className="mt-4 pt-3 border-t border-gray-800/50">
                                     <p className="text-[10px] text-gray-400 font-medium italic line-clamp-1 mb-2">{item.lastAction || 'Keine Bewegungen.'}</p>
@@ -436,7 +452,7 @@ export default function App() {
                                     <h3 className="text-sm font-bold text-white truncate">{item.name}</h3>
                                     <div className="flex gap-2 items-center">
                                         <span className="text-[8px] font-black uppercase text-gray-600">{item.location}</span>
-                                        {item.borrowedQuantity > 0 && <span className="text-[8px] font-black uppercase text-orange-500">{item.borrowedQuantity} Verliehen</span>}
+                                        {(item.borrowedQuantity || 0) > 0 && <span className="text-[8px] font-black uppercase text-orange-500">{item.borrowedQuantity} Verliehen</span>}
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-3 bg-black/40 px-3 py-1.5 rounded-xl border border-gray-800">
@@ -445,7 +461,13 @@ export default function App() {
                                     <button onClick={() => updateQty(item, 1)} className="text-gray-500 hover:text-white transition-colors"><Plus size={14}/></button>
                                 </div>
                                 <div className="flex gap-1">
-                                    <button onClick={() => updateQty(item, 0, 'ausgeliehen')} className="p-2 bg-orange-600/10 text-orange-500 rounded-lg hover:bg-orange-600/20 transition-all"><ArrowRightLeft size={16}/></button>
+                                    <button 
+                                        onClick={() => updateQty(item, 0, 'ausgeliehen')} 
+                                        disabled={item.quantity === 0}
+                                        className="p-2 bg-orange-600/10 text-orange-500 rounded-lg hover:bg-orange-600/20 transition-all disabled:opacity-30"
+                                    >
+                                        <ArrowRightLeft size={16}/>
+                                    </button>
                                     <button onClick={() => setItemToDelete(item)} className="p-2 text-gray-700 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
                                 </div>
                             </div>
@@ -487,7 +509,7 @@ export default function App() {
               </div>
               <div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Artikel Name</label><input required placeholder="Bezeichnung..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} /></div>
               <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Initial-Bestand</label><input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Warn-Menge</label><input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} /></div></div>
-              <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Bastelraum' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Bastelraum</button><button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Archivraum' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Archiv</button></div>
+              <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Bastelraum' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-black border-gray-800 text-gray-500'}`}>Bastelraum</button><button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Archivraum' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Archiv</button></div>
               <button type="submit" disabled={isSaving} className="w-full bg-orange-600 p-5 rounded-3xl font-black uppercase text-white shadow-xl mt-4 italic tracking-widest leading-none disabled:opacity-50">{isSaving ? 'Speichere...' : 'Speichern'}</button>
             </form>
           </div>
