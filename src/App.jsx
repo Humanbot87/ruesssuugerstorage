@@ -204,22 +204,33 @@ export default function App() {
   }, [user, userData]);
 
   // --- Inventar Logik ---
-  const toggleItemStatus = async (item) => {
-    const next = item.status === 'Ausgeliehen' ? 'Verfügbar' : 'Ausgeliehen';
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), {
-      status: next,
-      lastActionBy: `${userData?.firstName} ${userData?.lastName}`,
-      lastActionAt: new Date().toISOString()
-    });
+  const toggleStatus = async (item) => {
+    try {
+      const next = item.status === 'Ausgeliehen' ? 'Verfügbar' : 'Ausgeliehen';
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), {
+        status: next,
+        lastActionBy: `${userData?.firstName} ${userData?.lastName}`,
+        lastActionAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Fehler beim Status-Update:", err);
+      alert("Fehler beim Ändern des Status. Bitte erneut versuchen.");
+    }
   };
 
   const updateQty = async (id, d) => {
     const item = items.find(i => i.id === id);
     if (!item) return;
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id), {
-      quantity: Math.max(0, (item.quantity || 0) + d),
-      updatedAt: new Date().toISOString()
-    });
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id), {
+        quantity: Math.max(0, (item.quantity || 0) + d),
+        updatedAt: new Date().toISOString(),
+        lastActionBy: `${userData?.firstName} ${userData?.lastName}`
+      });
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleAddItem = async (e) => {
@@ -314,7 +325,6 @@ export default function App() {
     <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30">
       <header className="border-b border-gray-800 bg-[#111]/95 backdrop-blur-md sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
         <div className="flex items-center gap-3">
-          {/* Zurück Button im Header */}
           {activeTab !== 'inventory' && (
             <button 
               onClick={() => setActiveTab('inventory')}
@@ -356,7 +366,6 @@ export default function App() {
                <h2 className="text-xl font-black uppercase italic text-white flex items-center gap-3">
                 <ShieldCheck className="text-orange-500" /> Administration
               </h2>
-              {/* Excel Export Button */}
               <button 
                 onClick={exportToExcel}
                 className="flex items-center gap-2 bg-green-700 hover:bg-green-600 text-white px-6 py-3 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg active:scale-95"
@@ -412,7 +421,6 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {/* Prominenter Plus Button am Anfang der Liste */}
               <button 
                 onClick={() => setIsModalOpen(true)}
                 className="bg-[#161616]/50 border-2 border-dashed border-gray-800 rounded-[2.5rem] p-8 flex flex-col items-center justify-center gap-4 hover:border-orange-500/50 hover:bg-orange-500/5 transition-all group min-h-[300px]"
@@ -429,7 +437,7 @@ export default function App() {
               {filtered.map(item => (
                 <div key={item.id} className={`bg-[#161616] border border-gray-800 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col group hover:border-orange-500/30 transition-all duration-500 ${item.status === 'Ausgeliehen' ? 'opacity-90' : ''}`}>
                   <div className="h-48 bg-black relative flex items-center justify-center border-b border-gray-800/50 overflow-hidden">
-                    {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" /> : <ImageIcon className="text-gray-900" size={64} />}
+                    {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={item.name} /> : <ImageIcon className="text-gray-900" size={64} />}
                     
                     <button 
                       onClick={() => setItemToDelete(item)} 
@@ -478,7 +486,7 @@ export default function App() {
             </div>
             <form onSubmit={handleAddItem} className="space-y-6">
               <div onClick={() => fileInputRef.current?.click()} className="h-44 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex flex-col items-center justify-center overflow-hidden cursor-pointer hover:border-orange-500/50 transition-all group">
-                {newItem.image ? <img src={newItem.image} className="w-full h-full object-cover" /> : <div className="text-center"><Camera className="mx-auto text-gray-800 mb-2 group-hover:text-orange-500/50 transition-colors" size={32}/><p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Foto</p></div>}
+                {newItem.image ? <img src={newItem.image} className="w-full h-full object-cover" alt="Vorschau" /> : <div className="text-center"><Camera className="mx-auto text-gray-800 mb-2 group-hover:text-orange-500/50 transition-colors" size={32}/><p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Foto</p></div>}
                 <input type="file" ref={fileInputRef} hidden accept="image/*" capture="environment" onChange={(e) => {
                   const file = e.target.files[0];
                   if (!file) return;
