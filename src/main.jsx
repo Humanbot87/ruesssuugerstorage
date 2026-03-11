@@ -13,7 +13,7 @@ import {
   getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
 } from 'firebase/auth';
 
-// --- Firebase Konfiguration ---
+// --- Firebase Konfiguration (Aktualisiert) ---
 const firebaseConfig = {
   apiKey: "AIzaSyCkkwwicLEYX2EcdBpMtuyXRSZB35AaR0o",
   authDomain: "ruesssuugerstorage.firebaseapp.com",
@@ -24,10 +24,12 @@ const firebaseConfig = {
   appId: "1:268045537391:web:3b30913efcf97ee6fe3d9a"
 };
 
-// Initialisierung (Vermeidet Fehler bei Hot-Reload)
+// Initialisierung (Verhindert Fehler bei Hot-Reload in der Vorschau)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+// App-ID für die Pfadstruktur (Regel 1 konform)
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'ruess-suuger-storage-v1';
 
 export default function App() {
@@ -45,13 +47,17 @@ export default function App() {
     name: '', quantity: 1, location: 'Bastelraum', minStock: 0, status: 'Verfügbar', image: null
   });
 
-  // Schritt 1: Authentifizierung (Regel 3)
+  // Schritt 1: Authentifizierung (Sicherheits-Check & Fallback)
   useEffect(() => {
     let isMounted = true;
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+          try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } catch (e) {
+            await signInAnonymously(auth);
+          }
         } else {
           await signInAnonymously(auth);
         }
@@ -69,9 +75,9 @@ export default function App() {
     const timeout = setTimeout(() => {
       if (isMounted && loading) {
         setLoading(false);
-        if (!items.length) setError("Die Cloud-Verbindung dauert zu lange. Bitte Seite neu laden.");
+        if (!items.length) setError("Die Verbindung zum Server dauert zu lange. Bitte prüfe deine Firebase-Regeln.");
       }
-    }, 10000);
+    }, 8000);
 
     return () => {
       isMounted = false;
@@ -80,10 +86,11 @@ export default function App() {
     };
   }, []);
 
-  // Schritt 2: Daten laden (Regel 1 & 2)
+  // Schritt 2: Daten laden (Echtzeit-Synchronisation)
   useEffect(() => {
     if (!user) return;
 
+    // Pfad: /artifacts/{appId}/public/data/inventory
     const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
     
     const unsubscribe = onSnapshot(inventoryRef, (snapshot) => {
@@ -141,7 +148,7 @@ export default function App() {
       setIsModalOpen(false);
     } catch (err) { 
       console.error("Fehler beim Speichern:", err);
-      alert("Fehler beim Speichern. Bitte Berechtigungen prüfen.");
+      alert("Fehler beim Speichern. Hast du die Schreibrechte in den Firebase-Regeln gesetzt?");
     }
   };
 
@@ -199,7 +206,7 @@ export default function App() {
             <AlertCircle className="text-red-500 mb-3" size={32} />
             <h2 className="text-white font-bold mb-1 uppercase tracking-tighter italic">Hoppla, ein Fehler!</h2>
             <p className="text-red-400 text-xs mb-4">{error}</p>
-            <button onClick={() => window.location.reload()} className="text-[10px] uppercase font-black tracking-widest bg-red-600 text-white px-6 py-2.5 rounded-xl shadow-lg">Neu versuchen</button>
+            <button onClick={() => window.location.reload()} className="text-[10px] uppercase font-black tracking-widest bg-red-600 text-white px-6 py-2.5 rounded-xl shadow-lg active:scale-95">Neu versuchen</button>
           </div>
         )}
 
@@ -235,7 +242,7 @@ export default function App() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {filtered.map(item => (
-              <div key={item.id} className="bg-[#161616] rounded-[2.5rem] overflow-hidden border border-gray-800 shadow-2xl flex flex-col group hover:border-orange-500/30 transition-all duration-500">
+              <div key={item.id} className="bg-[#161616] border border-gray-800 rounded-[2.5rem] overflow-hidden border border-gray-800 shadow-2xl flex flex-col group hover:border-orange-500/30 transition-all duration-500">
                 <div className="h-44 bg-black flex items-center justify-center relative border-b border-gray-800/50 overflow-hidden">
                   {item.image ? (
                     <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={item.name} />
@@ -262,7 +269,7 @@ export default function App() {
                   <div className="mt-auto bg-black/40 p-4 rounded-3xl border border-gray-800/50 flex items-center justify-between shadow-inner">
                     <button onClick={() => updateQty(item.id, -1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 active:scale-90 transition-all text-gray-400"><Minus size={18}/></button>
                     <div className="text-center">
-                      <span className={`text-3xl font-black tracking-tighter ${item.quantity <= (item.minStock || 0) ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span>
+                      <span className={`text-3xl font-black tracking-tighter ${item.quantity <= (item.minStock || 0) ? 'text-red-500 animate-pulse' : 'text-orange-500'}`}>{item.quantity}</span>
                       <span className="block text-[8px] text-gray-600 uppercase font-bold tracking-widest mt-0.5 italic">Stück</span>
                     </div>
                     <button onClick={() => updateQty(item.id, 1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 active:scale-90 transition-all text-gray-400"><Plus size={18}/></button>
@@ -281,12 +288,13 @@ export default function App() {
         )}
       </main>
 
+      {/* Modal - Neuer Artikel */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-md">
           <div className="bg-[#161616] w-full max-w-md rounded-[3rem] p-8 border border-gray-800 shadow-2xl animate-in fade-in zoom-in duration-300">
             <div className="flex justify-between items-center mb-8">
               <h2 className="text-2xl font-black italic text-white uppercase tracking-tighter">Neuer Artikel</h2>
-              <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2.5 rounded-full text-gray-400 hover:text-white"><X size={20}/></button>
+              <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2.5 rounded-full text-gray-400 hover:text-white transition-colors"><X size={20}/></button>
             </div>
             <form onSubmit={handleAddItem} className="space-y-6">
               <div className="space-y-1">
@@ -305,20 +313,20 @@ export default function App() {
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Bezeichnung</label>
-                <input required type="text" placeholder="z.B. Schminke, Klebeband..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 focus:border-orange-500/50 text-white transition-all shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+                <input required type="text" placeholder="Was legst du ins Lager?" className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 focus:border-orange-500/50 text-white transition-all shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Menge</label>
-                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
+                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50 transition-all" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Warnlimit</label>
-                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50 transition-all" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg' : 'bg-black text-gray-600 border border-gray-800'}`}>Bastelraum</button>
+                <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg' : 'bg-black text-gray-700 border border-gray-800'}`}>Bastelraum</button>
                 <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Archivraum' ? 'bg-purple-600 text-white shadow-lg' : 'bg-black text-gray-700 border border-gray-800'}`}>Archiv</button>
               </div>
               <button type="submit" className="w-full bg-orange-600 hover:bg-orange-500 p-5 rounded-[2rem] font-black text-white uppercase tracking-[0.2em] shadow-xl shadow-orange-900/30 active:scale-95 transition-all mt-4 italic">Artikel Speichern</button>
