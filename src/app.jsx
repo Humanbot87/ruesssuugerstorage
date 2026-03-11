@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import ReactDOM from 'react-dom/client';
 import { 
   Plus, Minus, Search, Package, Archive, Hammer, Trash2, 
   PlusCircle, X, Loader2, AlertCircle, User, CheckCircle2, 
@@ -14,7 +15,6 @@ import {
 } from 'firebase/auth';
 
 // --- Firebase Konfiguration ---
-// Verifiziert für: ruesssuugerstorage
 const firebaseConfig = {
   apiKey: "AIzaSyCkkwwicLEYX2EcdBpMtuyXRSZB35AaR0o",
   authDomain: "ruesssuugerstorage.firebaseapp.com",
@@ -31,10 +31,6 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'ruess-suuger-storage-v1';
 
-/**
- * RüssSuuger Ämme Storage
- * Zentrale Inventarverwaltung
- */
 export default function App() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +65,7 @@ export default function App() {
         }
       } catch (err) {
         console.error("Auth-Fehler:", err);
-        if (isMounted) setError("Cloud-Anmeldung fehlgeschlagen. Bitte prüfe Internetverbindung & Firebase-Auth-Status.");
+        if (isMounted) setError("Cloud-Anmeldung fehlgeschlagen. Bitte Internetverbindung prüfen.");
       }
     };
 
@@ -82,15 +78,14 @@ export default function App() {
       }
     });
 
-    // Sicherheits-Abbruch nach 8 Sekunden, falls alles hängen bleibt
     const emergencyTimer = setTimeout(() => {
       if (isMounted && loading) {
         setLoading(false);
         if (!user && !items.length) {
-          setError("Die Cloud antwortet nicht schnell genug. Eventuell blockieren Firewall-Regeln den Zugriff.");
+          setError("Zeitüberschreitung. Die Cloud antwortet nicht.");
         }
       }
-    }, 8000);
+    }, 10000);
 
     return () => {
       isMounted = false;
@@ -103,7 +98,6 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    // Pfad: /artifacts/{appId}/public/data/inventory
     const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
     
     const unsubscribe = onSnapshot(inventoryRef, (snapshot) => {
@@ -114,7 +108,7 @@ export default function App() {
     }, (err) => {
       console.error("Firestore-Fehler:", err);
       if (err.code === 'permission-denied') {
-        setError("Zugriff verweigert! Hast du die Regeln in Firebase (Firestore -> Rules) veröffentlicht?");
+        setError("Zugriff verweigert! Bitte prüfe deine Firebase Regeln.");
       } else {
         setError("Daten-Fehler: " + err.message);
       }
@@ -161,7 +155,7 @@ export default function App() {
       setIsModalOpen(false);
     } catch (err) { 
       console.error("Speicherfehler:", err);
-      alert("Fehler beim Speichern: " + err.message);
+      alert("Fehler beim Speichern!");
     }
   };
 
@@ -211,18 +205,16 @@ export default function App() {
           <span className="text-orange-500">Suuger</span> 
           <span className="text-gray-400 ml-1 not-italic text-[10px] tracking-widest uppercase opacity-50">Ämme</span>
         </h1>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg shadow-orange-900/20 active:scale-95 transition-all">
-            <PlusCircle size={20} />
-          </button>
-        </div>
+        <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg active:scale-95 transition-all">
+          <PlusCircle size={20} />
+        </button>
       </header>
 
       <main className="p-4 max-w-6xl mx-auto pb-24">
         {error && (
           <div className="mb-8 bg-red-950/20 border border-red-900/30 p-6 rounded-3xl flex flex-col items-center text-center animate-in fade-in duration-500">
             <AlertCircle className="text-red-500 mb-3" size={32} />
-            <h2 className="text-white font-bold mb-1 uppercase tracking-tighter italic">Verbindungs-Hinweis</h2>
+            <h2 className="text-white font-bold mb-1 uppercase tracking-tighter italic">Hinweis</h2>
             <p className="text-red-400 text-xs mb-6 max-w-xs">{error}</p>
             <button onClick={() => window.location.reload()} className="text-[10px] uppercase font-black tracking-widest bg-red-600 text-white px-8 py-3 rounded-2xl shadow-lg active:scale-95">Neu laden</button>
           </div>
@@ -255,7 +247,7 @@ export default function App() {
         {filtered.length === 0 && !error ? (
           <div className="text-center py-24 border-2 border-dashed border-gray-800 rounded-[3rem] bg-[#0d0d0d] animate-pulse">
              <Package className="mx-auto w-16 h-16 text-gray-800 mb-4" strokeWidth={1} />
-             <p className="text-gray-600 font-bold uppercase tracking-widest text-[10px]">Noch keine Artikel im System</p>
+             <p className="text-gray-600 font-bold uppercase tracking-widest text-[10px]">Keine Artikel gefunden</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -306,7 +298,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Modal - Hinzufügen */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-md">
           <div className="bg-[#161616] w-full max-w-md rounded-[3rem] p-8 border border-gray-800 shadow-2xl animate-in zoom-in duration-300">
@@ -316,7 +307,7 @@ export default function App() {
             </div>
             <form onSubmit={handleAddItem} className="space-y-6">
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Foto aufnehmen</label>
+                <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Foto</label>
                 <div onClick={() => fileInputRef.current.click()} className="h-44 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex flex-col items-center justify-center overflow-hidden cursor-pointer hover:border-orange-500/50 transition-all group">
                   {newItem.image ? (
                     <img src={newItem.image} className="w-full h-full object-cover" alt="Vorschau" />
@@ -331,7 +322,7 @@ export default function App() {
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Bezeichnung</label>
-                <input required type="text" placeholder="Was legst du ins Lager?" className="w-full bg-black p-5 rounded-2xl outline-none border border-gray-800 focus:border-orange-500/50 text-white transition-all shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+                <input required type="text" placeholder="Was ist es?" className="w-full bg-black p-5 rounded-2xl outline-none border border-gray-800 focus:border-orange-500/50 text-white transition-all shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
@@ -339,13 +330,13 @@ export default function App() {
                   <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50 transition-all" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Bestands-Warnung</label>
+                  <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Limit</label>
                   <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50 transition-all" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'bg-black text-gray-700 border border-gray-800'}`}>Bastelraum</button>
-                <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Archivraum' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' : 'bg-black text-gray-700 border border-gray-800'}`}>Archiv</button>
+                <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg' : 'bg-black text-gray-700 border border-gray-800'}`}>Bastelraum</button>
+                <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Archivraum' ? 'bg-purple-600 text-white shadow-lg' : 'bg-black text-gray-700 border border-gray-800'}`}>Archiv</button>
               </div>
               <button type="submit" className="w-full bg-orange-600 hover:bg-orange-500 p-5 rounded-3xl font-black text-white uppercase tracking-[0.2em] shadow-xl shadow-orange-900/30 active:scale-95 transition-all mt-4 italic">Speichern</button>
             </form>
@@ -355,12 +346,12 @@ export default function App() {
 
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-md">
-          <div className="bg-[#1a1a1a] p-10 rounded-[3.5rem] text-center border border-red-900/20 max-w-sm shadow-2xl animate-in zoom-in duration-300">
+          <div className="bg-[#1a1a1a] p-10 rounded-[3.5rem] text-center border border-red-900/20 max-w-sm shadow-2xl animate-in fade-in zoom-in duration-300">
             <div className="w-20 h-20 bg-red-950/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6"><AlertTriangle size={40} /></div>
-            <h3 className="text-xl font-black mb-4 italic text-white uppercase tracking-tighter">Endgültig löschen?</h3>
-            <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich entfernen?</p>
+            <h3 className="text-xl font-black mb-4 italic text-white uppercase tracking-tighter">Wirklich löschen?</h3>
+            <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig entfernen?</p>
             <div className="grid grid-cols-2 gap-4">
-              <button onClick={() => setItemToDelete(null)} className="py-4 rounded-2xl bg-gray-800 text-gray-400 font-black uppercase text-[10px] tracking-widest hover:text-white transition-colors">Abbrechen</button>
+              <button onClick={() => setItemToDelete(null)} className="py-4 rounded-2xl bg-gray-800 text-gray-400 font-black uppercase text-[10px] tracking-widest hover:text-white transition-colors">Nein</button>
               <button onClick={async () => {
                 try {
                   const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id);
@@ -374,4 +365,11 @@ export default function App() {
       )}
     </div>
   );
+}
+
+// RENDERING-STARTPUNKT (Wichtig für Vercel/Produktion)
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(<App />);
 }
