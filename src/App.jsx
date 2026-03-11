@@ -34,11 +34,12 @@ const db = getFirestore(app);
 // appId v2 für saubere Datenstruktur
 const appId = "ruess-suuger-storage-v2";
 
-const apiKey = ""; // Gemini API Key wird automatisch injiziert
+const apiKey = ""; // API Key wird automatisch injiziert
 
 export default function App() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [user, setUser] = useState(null);
   const [userData, setUserData] = useState(null);
   const [members, setMembers] = useState([]); 
@@ -107,7 +108,6 @@ export default function App() {
     const fullName = `${authForm.firstName.trim()} ${authForm.lastName.trim()}`;
     
     try {
-      // Direkte Abfrage der Registry, um Latenzprobleme mit dem lokalen State zu vermeiden
       const memberQuery = query(
         collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'),
         where("fullName", "==", fullName)
@@ -123,7 +123,6 @@ export default function App() {
           setAuthStep('setup_password');
         }
       } else {
-        // Falls Raphael Drago noch gar nicht in der DB ist
         const isMainAdmin = fullName.toLowerCase() === 'raphael drago';
         if (isMainAdmin) {
           setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
@@ -244,6 +243,23 @@ export default function App() {
     setAiRecommendationLoading(null);
   };
 
+  const generateImageWithAI = async (itemName) => {
+    try {
+      const prompt = `Ein klares, freigestelltes Produktfoto von ${itemName} auf neutralem, hellem Hintergrund. Professionell ausgeleuchtet.`;
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
+        method: 'POST',
+        body: JSON.stringify({ instances: { prompt }, parameters: { sampleCount: 1 } })
+      });
+      const result = await response.json();
+      if (result.predictions?.[0]?.bytesBase64Encoded) {
+        return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+      }
+    } catch (err) {
+      console.error("Image generation failed", err);
+    }
+    return null;
+  };
+
   const analyzeImageWithAI = async (base64Data) => {
     setIsAnalyzing(true);
     const pureBase64 = base64Data.split(',')[1];
@@ -259,6 +275,62 @@ export default function App() {
       if (aiName) setNewItem(prev => ({ ...prev, name: aiName }));
     } catch (e) { console.error("AI Error", e); }
     setIsAnalyzing(false);
+  };
+
+  const handleSaveItem = async (e) => {
+    e.preventDefault();
+    if (!user || !newItem.name) return;
+    setIsSaving(true);
+
+    const trimmedName = newItem.name.trim();
+    const existingItem = items.find(i => i.name.toLowerCase() === trimmedName.toLowerCase());
+
+    try {
+      if (existingItem) {
+        // Bestehenden Artikel aktualisieren (Addieren)
+        const addedQty = parseInt(newItem.quantity);
+        const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', existingItem.id);
+        
+        await updateDoc(itemRef, {
+          quantity: existingItem.quantity + addedQty,
+          updatedBy: user.displayName,
+          updatedAt: new Date().toISOString(),
+          lastAction: `${user.displayName} hat ${addedQty} Stk. zum Bestand addiert.`,
+          history: arrayUnion({
+            user: user.displayName,
+            action: 'bestand_erhoeht',
+            amount: addedQty,
+            timestamp: new Date().toISOString()
+          })
+        });
+      } else {
+        // Neuen Artikel anlegen (ggf. mit KI-Bild)
+        let finalImage = newItem.image;
+        if (!finalImage) {
+          finalImage = await generateImageWithAI(trimmedName);
+        }
+
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), {
+          ...newItem,
+          name: trimmedName,
+          image: finalImage,
+          quantity: parseInt(newItem.quantity),
+          minStock: parseInt(newItem.minStock),
+          borrowedQuantity: 0,
+          updatedBy: user.displayName,
+          updatedAt: new Date().toISOString(),
+          lastAction: `Neu erfasst von ${user.displayName}.`,
+          history: [{ user: user.displayName, action: 'erfasst', amount: newItem.quantity, timestamp: new Date().toISOString() }],
+          currentStatus: 'verfügbar'
+        });
+      }
+      setIsModalOpen(false);
+      setNewItem({ name: '', quantity: 1, location: 'Bastelraum', minStock: 5, image: null });
+    } catch (err) {
+      console.error("Save error", err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const exportToExcel = () => {
@@ -317,7 +389,7 @@ export default function App() {
                 <p className="text-xs text-orange-500 font-bold text-center mb-4 uppercase tracking-tighter">Hallo {targetMember.fullName}</p>
                 <div className="relative">
                   <KeyRound className="absolute left-4 top-4 text-gray-700" size={18} />
-                  <input required autoFocus type="password" placeholder={authStep === 'setup_password' ? "Wähle ein neues Passwort" : "Passwort eingeben"} className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
+                  <input required autoFocus type="password" placeholder={authStep === 'setup_password' ? "Neues Passwort wählen" : "Passwort eingeben"} className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
                 </div>
               </div>
             )}
@@ -359,26 +431,10 @@ export default function App() {
           
           <div className="space-y-3">
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                <button 
-                    onClick={() => setFilterType('All')} 
-                    className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterType === 'All' ? 'bg-white border-white text-black shadow-lg shadow-white/10' : 'bg-gray-800/30 border-gray-800 text-gray-500'}`}
-                >
-                    Alle
-                </button>
-                <button 
-                    onClick={() => setFilterType('Besorgen')} 
-                    className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap flex items-center gap-2 ${filterType === 'Besorgen' ? 'bg-red-600 border-red-500 text-white shadow-lg shadow-red-900/20' : 'bg-red-900/10 border-red-900/20 text-red-500/70'}`}
-                >
-                    <ShoppingCart size={14} /> Besorgen ({besorgenCount})
-                </button>
-                <button 
-                    onClick={() => setFilterType('Ausgeliehen')} 
-                    className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap flex items-center gap-2 ${filterType === 'Ausgeliehen' ? 'bg-orange-600 border-orange-500 text-white shadow-lg shadow-orange-900/20' : 'bg-orange-900/10 border-orange-900/20 text-orange-500/70'}`}
-                >
-                    <ArrowRightLeft size={14} /> Ausgeliehen ({ausgeliehenCount})
-                </button>
+                <button onClick={() => setFilterType('All')} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterType === 'All' ? 'bg-white border-white text-black shadow-lg shadow-white/10' : 'bg-gray-800/30 border-gray-800 text-gray-500'}`}>Alle</button>
+                <button onClick={() => setFilterType('Besorgen')} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap flex items-center gap-2 ${filterType === 'Besorgen' ? 'bg-red-600 border-red-500 text-white shadow-lg shadow-red-900/20' : 'bg-red-900/10 border-red-900/20 text-red-500/70'}`}><ShoppingCart size={14} /> Besorgen ({besorgenCount})</button>
+                <button onClick={() => setFilterType('Ausgeliehen')} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap flex items-center gap-2 ${filterType === 'Ausgeliehen' ? 'bg-orange-600 border-orange-500 text-white shadow-lg shadow-orange-900/20' : 'bg-orange-900/10 border-orange-900/20 text-orange-500/70'}`}><ArrowRightLeft size={14} /> Ausgeliehen ({ausgeliehenCount})</button>
             </div>
-
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
               {['All', 'Bastelraum', 'Archivraum'].map(loc => (
                 <button key={loc} onClick={() => setFilterLocation(loc)} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-tighter border transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600/20 border-orange-500/50 text-orange-500' : 'bg-gray-800/20 border-gray-800/50 text-gray-600 hover:text-gray-400'}`}>{loc === 'All' ? 'Alle Räume' : loc}</button>
@@ -388,104 +444,36 @@ export default function App() {
         </div>
 
         {filteredItems.length === 0 ? (
-            <div className="text-center py-20 bg-black/20 border-2 border-dashed border-gray-800 rounded-[3rem]">
-                <Info size={48} className="mx-auto text-gray-800 mb-4" />
-                <p className="text-gray-600 font-bold uppercase tracking-widest text-xs italic">Keine Einträge vorhanden</p>
-            </div>
+            <div className="text-center py-20 bg-black/20 border-2 border-dashed border-gray-800 rounded-[3rem]"><Info size={48} className="mx-auto text-gray-800 mb-4" /><p className="text-gray-600 font-bold uppercase tracking-widest text-xs italic">Keine Einträge vorhanden</p></div>
         ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {filteredItems.map(item => {
                 const bedarf = Math.max(0, item.minStock - item.quantity);
                 const isCritical = item.quantity <= item.minStock;
-
                 return (
                 <div key={item.id} className={`bg-[#161616] rounded-3xl overflow-hidden border border-gray-800 shadow-xl group hover:border-gray-700 transition-all flex flex-col ${isCritical ? 'ring-1 ring-red-500/30' : ''}`}>
                     <div className="h-44 bg-black flex items-center justify-center relative overflow-hidden border-b border-gray-800/50">
                         {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={item.name} /> : <ImageIcon className="text-gray-900 opacity-30" size={64} />}
-                        
-                        {isCritical && (
-                            <div className="absolute top-2 left-2 flex flex-col gap-1">
-                                <div className="bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase shadow-lg">Nachfüllen</div>
-                                <div className="bg-white text-black text-[10px] font-black px-2 py-1 rounded-lg shadow-xl flex items-center gap-1">
-                                    <ShoppingCart size={10} /> +{bedarf} Stk.
-                                </div>
-                            </div>
-                        )}
-                        
-                        {(item.borrowedQuantity || 0) > 0 && (
-                            <div className="absolute top-2 right-2 bg-orange-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase shadow-lg border border-orange-400/30">
-                                {item.borrowedQuantity} Ausgeliehen
-                            </div>
-                        )}
+                        {isCritical && (<div className="absolute top-2 left-2 flex flex-col gap-1"><div className="bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase shadow-lg">Nachfüllen</div><div className="bg-white text-black text-[10px] font-black px-2 py-1 rounded-lg shadow-xl flex items-center gap-1"><ShoppingCart size={10} /> +{bedarf} Stk.</div></div>)}
+                        {(item.borrowedQuantity || 0) > 0 && (<div className="absolute top-2 right-2 bg-orange-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase shadow-lg border border-orange-400/30">{item.borrowedQuantity} Ausgeliehen</div>)}
                     </div>
-                    
                     <div className="p-5 flex-1 flex flex-col">
-                        <div className="flex justify-between items-start mb-1">
-                            <h3 className="font-bold text-lg text-white truncate pr-2 leading-tight">{item.name}</h3>
-                            <button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
-                        </div>
+                        <div className="flex justify-between items-start mb-1"><h3 className="font-bold text-lg text-white truncate pr-2 leading-tight">{item.name}</h3><button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button></div>
                         <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest mb-4 italic">{item.location}</p>
-                        
                         <div className="flex items-center justify-between bg-black/40 p-4 rounded-2xl border border-gray-800/50 shadow-inner">
                             <button onClick={() => updateQty(item, -1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Minus size={18}/></button>
-                            <div className="text-center">
-                                <span className={`text-3xl font-black ${isCritical ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span>
-                                <span className="block text-[8px] text-gray-600 font-bold uppercase mt-1 tracking-tighter">Bestand (Limit: {item.minStock})</span>
-                            </div>
+                            <div className="text-center"><span className={`text-3xl font-black ${isCritical ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span><span className="block text-[8px] text-gray-600 font-bold uppercase mt-1 tracking-tighter">Bestand (Limit: {item.minStock})</span></div>
                             <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Plus size={18}/></button>
                         </div>
-
                         <div className="grid grid-cols-2 gap-2 mt-3">
-                            <button 
-                                onClick={() => updateQty(item, 0, 'ausgeliehen')}
-                                disabled={item.quantity === 0}
-                                className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 ${item.currentStatus === 'ausgeliehen' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-orange-600/10 border-orange-500/20 text-orange-500'}`}
-                            >
-                                <ArrowRightLeft size={12} /> Ausleihen
-                            </button>
-                            <button 
-                                onClick={() => updateQty(item, 0, 'zurückgebracht')}
-                                disabled={(item.borrowedQuantity || 0) === 0}
-                                className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95 disabled:opacity-30"
-                            >
-                                <RotateCcw size={12} /> Zurück
-                            </button>
+                            <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={item.quantity === 0} className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 ${item.currentStatus === 'ausgeliehen' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-orange-600/10 border-orange-500/20 text-orange-500'}`}><ArrowRightLeft size={12} /> Ausleihen</button>
+                            <button onClick={() => updateQty(item, 0, 'zurückgebracht')} disabled={(item.borrowedQuantity || 0) === 0} className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95 disabled:opacity-30"><RotateCcw size={12} /> Zurück</button>
                         </div>
-                        
                         <div className="mt-4 pt-3 border-t border-gray-800/50">
-                            <div className="flex items-center justify-between mb-1">
-                                <div className="flex items-center gap-2 text-[8px] font-black uppercase text-gray-500">
-                                    <History size={10} /> Letzte Aktivität
-                                </div>
-                                <button 
-                                    onClick={() => recommendMinStockWithAI(item)}
-                                    className="text-orange-500 hover:text-white transition-colors"
-                                    title="KI Mindestmengen-Empfehlung"
-                                >
-                                    {aiRecommendationLoading === item.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                                </button>
-                            </div>
-                            
-                            <p className="text-[10px] text-gray-400 font-medium italic line-clamp-1 mb-2">
-                                {item.lastAction || 'Keine Bewegungen.'}
-                            </p>
-
-                            {item.aiRecommendedMin && (
-                                <div className="bg-orange-600/5 border border-orange-500/10 rounded-lg p-2 mb-2 animate-in fade-in slide-in-from-top-1">
-                                    <div className="flex items-center gap-1 text-orange-400 text-[8px] font-black uppercase mb-1">
-                                        <TrendingUp size={10} /> KI Empfehlung
-                                    </div>
-                                    <p className="text-[9px] text-gray-500 leading-tight">
-                                        Empfohlener Minimalbestand: <span className="text-white font-bold">{item.aiRecommendedMin}</span>
-                                    </p>
-                                    <p className="text-[8px] text-gray-600 italic mt-1">{item.aiReason}</p>
-                                </div>
-                            )}
-
-                            <div className="flex justify-between items-center text-[7px] font-bold text-gray-700 uppercase tracking-tighter">
-                                <span>Nutzer: {item.updatedBy || 'N/A'}</span>
-                                <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ''}</span>
-                            </div>
+                            <div className="flex items-center justify-between mb-1"><div className="flex items-center gap-2 text-[8px] font-black uppercase text-gray-500"><History size={10} /> Letzte Aktivität</div><button onClick={() => recommendMinStockWithAI(item)} className="text-orange-500 hover:text-white transition-colors" title="KI Mindestmengen-Empfehlung">{aiRecommendationLoading === item.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}</button></div>
+                            <p className="text-[10px] text-gray-400 font-medium italic line-clamp-1 mb-2">{item.lastAction || 'Keine Bewegungen.'}</p>
+                            {item.aiRecommendedMin && (<div className="bg-orange-600/5 border border-orange-500/10 rounded-lg p-2 mb-2 animate-in fade-in slide-in-from-top-1"><div className="flex items-center gap-1 text-orange-400 text-[8px] font-black uppercase mb-1"><TrendingUp size={10} /> KI Empfehlung</div><p className="text-[9px] text-gray-500 leading-tight">Empfohlener Minimalbestand: <span className="text-white font-bold">{item.aiRecommendedMin}</span></p><p className="text-[8px] text-gray-600 italic mt-1">{item.aiReason}</p></div>)}
+                            <div className="flex justify-between items-center text-[7px] font-bold text-gray-700 uppercase tracking-tighter"><span>Nutzer: {item.updatedBy || 'N/A'}</span><span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ''}</span></div>
                         </div>
                     </div>
                 </div>
@@ -499,49 +487,8 @@ export default function App() {
       {isAdminPanelOpen && (
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in fade-in duration-300">
           <div className="bg-[#161616] w-full max-w-2xl rounded-[2.5rem] border border-orange-500/10 shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="p-8 border-b border-gray-800 flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <ShieldCheck className="text-orange-500" size={24} />
-                <div>
-                   <h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight text-white">Admin Control</h2>
-                   <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Vereins-Stammdaten</p>
-                </div>
-              </div>
-              <button onClick={() => setIsAdminPanelOpen(false)} className="bg-gray-800 p-3 rounded-2xl hover:bg-gray-700"><X size={20}/></button>
-            </div>
-            <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar">
-              <button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl">
-                <FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)
-              </button>
-              
-              <div className="space-y-4 pt-4 border-t border-gray-800">
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3>
-                <form onSubmit={async (e) => {
-                  e.preventDefault();
-                  const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`;
-                  await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName, role: 'member', isInitialized: false });
-                  setNewMemberName({ first: '', last: '' });
-                }} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} />
-                  <input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} />
-                  <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button>
-                </form>
-              </div>
-              <div className="space-y-4 pb-4">
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3>
-                <div className="grid gap-2">
-                  {members.map(m => (
-                    <div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all">
-                      <div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div>
-                      <div className="flex gap-2">
-                        {m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}
-                        {m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Löschen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <div className="p-8 border-b border-gray-800 flex justify-between items-center"><div className="flex items-center gap-3"><ShieldCheck className="text-orange-500" size={24} /><div><h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight text-white">Admin Control</h2><p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Vereins-Stammdaten</p></div></div><button onClick={() => setIsAdminPanelOpen(false)} className="bg-gray-800 p-3 rounded-2xl hover:bg-gray-700"><X size={20}/></button></div>
+            <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar"><button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl"><FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)</button><div className="space-y-4 pt-4 border-t border-gray-800"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3><form onSubmit={async (e) => { e.preventDefault(); const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName, role: 'member', isInitialized: false }); setNewMemberName({ first: '', last: '' }); }} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} /><input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} /><button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button></form></div><div className="space-y-4 pb-4"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3><div className="grid gap-2">{members.map(m => (<div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all"><div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div><div className="flex gap-2">{m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}{m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Löschen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}</div></div>))}</div></div></div>
           </div>
         </div>
       )}
@@ -550,56 +497,17 @@ export default function App() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/90 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in zoom-in-95 duration-300">
           <div className="bg-[#161616] w-full max-w-md rounded-[2.5rem] p-8 border border-gray-800 shadow-2xl overflow-y-auto max-h-[90vh] no-scrollbar">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Neuaufnahme</h2>
-              <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2.5 rounded-full text-gray-400 hover:text-white transition-colors"><X size={20}/></button>
-            </div>
-            <form onSubmit={async (e) => {
-              e.preventDefault();
-              await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), {
-                ...newItem, 
-                quantity: parseInt(newItem.quantity), 
-                minStock: parseInt(newItem.minStock),
-                borrowedQuantity: 0,
-                updatedBy: user.displayName, 
-                updatedAt: new Date().toISOString(),
-                lastAction: `Neu erfasst von ${user.displayName}.`,
-                history: [{ user: user.displayName, action: 'erfasst', amount: newItem.quantity, timestamp: new Date().toISOString() }],
-                currentStatus: 'verfügbar'
-              });
-              setIsModalOpen(false);
-              setNewItem({ name: '', quantity: 1, location: 'Bastelraum', minStock: 5, image: null });
-            }} className="space-y-5">
+            <div className="flex justify-between items-center mb-8"><h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Neuaufnahme</h2><button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2.5 rounded-full text-gray-400 hover:text-white transition-colors"><X size={20}/></button></div>
+            <form onSubmit={handleSaveItem} className="space-y-5">
               <div onClick={() => fileInputRef.current.click()} className="h-44 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex items-center justify-center overflow-hidden cursor-pointer relative group hover:border-orange-500 transition-all shadow-inner">
                 {newItem.image ? <img src={newItem.image} className="w-full h-full object-cover" alt="Preview" /> : <div className="text-center group-hover:scale-110 transition-transform"><Camera className="mx-auto text-gray-800 mb-2" size={32}/><p className="text-[10px] font-bold uppercase text-gray-600">Foto aufnehmen</p></div>}
-                {isAnalyzing && <div className="absolute inset-0 bg-black/70 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-orange-500" /><p className="text-[10px] text-white font-bold uppercase tracking-widest animate-pulse italic">KI erkennt Artikel...</p></div>}
-                <input type="file" ref={fileInputRef} hidden accept="image/*" capture="environment" onChange={(e) => {
-                  const file = e.target.files[0];
-                  if(!file) return;
-                  const reader = new FileReader();
-                  reader.onload = (ev) => { setNewItem({...newItem, image: ev.target.result}); analyzeImageWithAI(ev.target.result); };
-                  reader.readAsDataURL(file);
-                }} />
+                {(isAnalyzing || isSaving) && <div className="absolute inset-0 bg-black/70 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-orange-500" /><p className="text-[10px] text-white font-bold uppercase tracking-widest animate-pulse italic">{isSaving && !newItem.image ? 'KI generiert Bild...' : 'Verarbeitung...'}</p></div>}
+                <input type="file" ref={fileInputRef} hidden accept="image/*" capture="environment" onChange={(e) => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (ev) => { setNewItem({...newItem, image: ev.target.result}); analyzeImageWithAI(ev.target.result); }; reader.readAsDataURL(file); }} />
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Artikel Name</label>
-                <input required placeholder="Bezeichnung..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Initial-Bestand</label>
-                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Warn-Menge</label>
-                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Bastelraum' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Bastelraum</button>
-                <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Archivraum' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Archiv</button>
-              </div>
-              <button type="submit" className="w-full bg-orange-600 p-5 rounded-3xl font-black uppercase text-white shadow-xl mt-4 italic tracking-widest leading-none">Speichern</button>
+              <div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Artikel Name</label><input required placeholder="Bezeichnung..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} /></div>
+              <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Initial-Bestand</label><input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Warn-Menge</label><input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} /></div></div>
+              <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Bastelraum' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Bastelraum</button><button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase border transition-all shadow-lg ${newItem.location === 'Archivraum' ? 'bg-purple-600 border-purple-500 text-white' : 'bg-black border-gray-800 text-gray-600'}`}>Archiv</button></div>
+              <button type="submit" disabled={isSaving} className="w-full bg-orange-600 p-5 rounded-3xl font-black uppercase text-white shadow-xl mt-4 italic tracking-widest leading-none disabled:opacity-50">{isSaving ? 'Speichere...' : 'Speichern'}</button>
             </form>
           </div>
         </div>
@@ -608,15 +516,7 @@ export default function App() {
       {/* DELETE DIALOG */}
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
-            <div className="w-20 h-20 bg-red-950/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={48} /></div>
-            <h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight text-center">Gegenstand löschen?</h3>
-            <p className="text-gray-600 text-sm mb-10 leading-relaxed text-center">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich endgültig entfernen?</p>
-            <div className="grid grid-cols-2 gap-4">
-              <button onClick={() => setItemToDelete(null)} className="bg-gray-800 py-4 rounded-2xl font-bold text-gray-400 hover:text-white transition-all shadow-lg">Nein</button>
-              <button onClick={async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id)); setItemToDelete(null); }} className="bg-red-600 py-4 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all">Ja, löschen</button>
-            </div>
-          </div>
+          <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl"><div className="w-20 h-20 bg-red-950/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={48} /></div><h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight text-center">Gegenstand löschen?</h3><p className="text-gray-600 text-sm mb-10 leading-relaxed text-center">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich endgültig entfernen?</p><div className="grid grid-cols-2 gap-4"><button onClick={() => setItemToDelete(null)} className="bg-gray-800 py-4 rounded-2xl font-bold text-gray-400 hover:text-white transition-all shadow-lg">Nein</button><button onClick={async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id)); setItemToDelete(null); }} className="bg-red-600 py-4 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all">Ja, löschen</button></div></div>
         </div>
       )}
     </div>
