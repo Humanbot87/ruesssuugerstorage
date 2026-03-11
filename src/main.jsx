@@ -18,7 +18,7 @@ import {
   Image as ImageIcon, 
   AlertTriangle 
 } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, 
   collection, 
@@ -37,7 +37,7 @@ import {
 } from 'firebase/auth';
 
 // ========================================================
-// DEINE FIREBASE KONFIGURATION
+// FIREBASE KONFIGURATION
 // ========================================================
 const firebaseConfig = {
   apiKey: "AIzaSyCkkwwicLEYX2EcdBpMtuyXRSZB35AaR0o",
@@ -49,11 +49,11 @@ const firebaseConfig = {
   appId: "1:268045537391:web:3b30913efcf97ee6fe3d9a"
 };
 
-// Globale Variablen für Firebase (Regel 1)
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'ruess-suuger-storage-v1';
-const app = initializeApp(firebaseConfig);
+// Sichere Initialisierung (verhindert Mehrfach-Initialisierung)
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'ruess-suuger-storage-v1';
 
 /**
  * RüssSuuger Ämme Storage App
@@ -62,10 +62,10 @@ const db = getFirestore(app);
 export default function App() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterLocation, setFilterLocation] = useState('All');
-  const [filterStatus, setFilterStatus] = useState('All'); 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null); 
   const fileInputRef = useRef(null);
@@ -80,39 +80,41 @@ export default function App() {
     image: null
   });
 
-  // Authentifizierungs-Logik (Regel 3: Auth vor Queries)
+  // 1. Authentifizierung (Regel: Auth vor Queries)
   useEffect(() => {
+    let isMounted = true;
+    
     const initAuth = async () => {
       try {
-        // Zuerst Custom Token prüfen, dann anonym (Pflichtregel)
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           try {
             await signInWithCustomToken(auth, __initial_auth_token);
-          } catch (tokenError) {
-            // Falls mismatch oder ungültig, Fallback auf anonyme Anmeldung
-            console.warn("Custom Token fehlgeschlagen, versuche anonyme Anmeldung...", tokenError.code);
+          } catch (e) {
             await signInAnonymously(auth);
           }
         } else {
           await signInAnonymously(auth);
         }
-      } catch (error) {
-        console.error("Kritischer Auth-Fehler:", error);
+      } catch (err) {
+        if (isMounted) setError("Verbindung zum Server fehlgeschlagen.");
       }
     };
 
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      if (isMounted) setUser(u);
     });
-    return () => unsubscribe();
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
-  // Daten-Synchronisation (Regel 1 & 2)
+  // 2. Daten-Synchronisation
   useEffect(() => {
     if (!user) return;
 
-    // Pfad: /artifacts/{appId}/public/data/{collectionName}
     const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
     const q = query(inventoryRef);
 
@@ -123,8 +125,9 @@ export default function App() {
       }));
       setItems(itemsData);
       setLoading(false);
-    }, (error) => {
-      console.error("Firestore-Fehler:", error);
+    }, (err) => {
+      console.error("Firestore Error:", err);
+      setError("Daten konnten nicht geladen werden.");
       setLoading(false);
     });
 
@@ -159,13 +162,13 @@ export default function App() {
       const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
       await addDoc(inventoryRef, {
         ...newItem,
-        quantity: parseInt(newItem.quantity),
-        minStock: parseInt(newItem.minStock),
+        quantity: parseInt(newItem.quantity) || 0,
+        minStock: parseInt(newItem.minStock) || 0,
         updatedAt: new Date().toISOString()
       });
       setNewItem({ name: '', quantity: 1, location: 'Bastelraum', category: 'Allgemein', minStock: 0, status: 'Verfügbar', image: null });
       setIsModalOpen(false);
-    } catch (error) { console.error("Hinzufügen Fehler:", error); }
+    } catch (err) { setError("Speichern fehlgeschlagen."); }
   };
 
   const updateQuantity = async (id, delta) => {
@@ -174,7 +177,7 @@ export default function App() {
     if (!item) return;
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
     await updateDoc(itemRef, { 
-      quantity: Math.max(0, item.quantity + delta),
+      quantity: Math.max(0, (item.quantity || 0) + delta),
       updatedAt: new Date().toISOString()
     });
   };
@@ -186,41 +189,46 @@ export default function App() {
     await updateDoc(itemRef, { status: newStatus });
   };
 
-  const confirmDelete = async () => {
-    if (!user || !itemToDelete) return;
-    const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id);
-    await deleteDoc(itemRef);
-    setItemToDelete(null);
-  };
-
   const filteredItems = useMemo(() => {
     return items.filter(item => {
-      const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = item.name?.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesLocation = filterLocation === 'All' || item.location === filterLocation;
-      const matchesStatus = filterStatus === 'All' || (item.status || 'Verfügbar') === filterStatus;
-      return matchesSearch && matchesLocation && matchesStatus;
-    }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [items, searchTerm, filterLocation, filterStatus]);
+      return matchesSearch && matchesLocation;
+    }).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [items, searchTerm, filterLocation]);
 
-  if (loading) {
+  // Lade-Screen
+  if (loading && !error) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-        <Loader2 className="w-12 h-12 text-orange-500 animate-spin" />
+      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4">
+        <Loader2 className="w-10 h-10 text-orange-500 animate-spin mb-4" />
+        <p className="text-gray-500 font-bold tracking-widest uppercase text-[10px]">Lager wird geladen...</p>
+      </div>
+    );
+  }
+
+  // Error-Screen
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-8 text-center">
+        <AlertCircle className="w-16 h-16 text-red-500 mb-4" />
+        <h2 className="text-white font-bold mb-2">Hoppla!</h2>
+        <p className="text-gray-500 text-sm mb-6">{error}</p>
+        <button onClick={() => window.location.reload()} className="bg-orange-600 px-6 py-2 rounded-xl text-white font-bold text-sm">Neu laden</button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30">
-      <header className="border-b border-gray-800 bg-[#111]/80 backdrop-blur-md sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
+    <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30 pb-10">
+      <header className="border-b border-gray-800 bg-[#111]/90 backdrop-blur-md sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
         <div className="flex items-baseline gap-1">
           <span className="text-xl font-black text-gray-500 uppercase tracking-tighter">Rüss</span>
           <span className="text-xl font-black text-orange-500 uppercase tracking-tighter">Suuger</span>
-          <span className="hidden sm:inline text-[10px] bg-gray-800 px-2 py-0.5 rounded text-gray-400 font-bold ml-2 uppercase tracking-widest">Storage</span>
         </div>
         <button 
           onClick={() => setIsModalOpen(true)} 
-          className="bg-orange-600 hover:bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg shadow-orange-900/20 active:scale-95 transition-all flex items-center gap-2"
+          className="bg-orange-600 hover:bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg active:scale-95 transition-all flex items-center gap-2"
         >
           <PlusCircle size={20} />
           <span className="hidden sm:inline text-xs font-black uppercase tracking-wider">Neu</span>
@@ -234,22 +242,28 @@ export default function App() {
             <input 
               type="text" 
               placeholder="Suchen..." 
-              className="w-full bg-[#161616] border border-gray-800 rounded-2xl py-3.5 pl-12 pr-4 outline-none focus:border-orange-500/50 text-white shadow-inner placeholder:text-gray-700" 
+              className="w-full bg-[#161616] border border-gray-800 rounded-2xl py-3.5 pl-12 pr-4 outline-none focus:border-orange-500/50 text-white shadow-inner" 
               value={searchTerm} 
               onChange={(e) => setSearchTerm(e.target.value)} 
             />
           </div>
           <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-            <button onClick={() => setFilterLocation('All')} className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === 'All' ? 'bg-orange-600 text-white shadow-lg' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}>Alle</button>
-            <button onClick={() => setFilterLocation('Bastelraum')} className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === 'Bastelraum' ? 'bg-orange-600 text-white shadow-lg' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}>Bastelraum</button>
-            <button onClick={() => setFilterLocation('Archivraum')} className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === 'Archivraum' ? 'bg-orange-600 text-white shadow-lg' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}>Archiv</button>
+            {['All', 'Bastelraum', 'Archivraum'].map((loc) => (
+              <button 
+                key={loc}
+                onClick={() => setFilterLocation(loc)} 
+                className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 text-white' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}
+              >
+                {loc === 'All' ? 'Alle' : loc}
+              </button>
+            ))}
           </div>
         </div>
 
         {filteredItems.length === 0 ? (
           <div className="text-center py-24 bg-[#0d0d0d] rounded-[3rem] border-2 border-dashed border-gray-800">
-            <Package className="mx-auto w-16 h-16 text-gray-800 mb-4" strokeWidth={1} />
-            <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">Keine Artikel gefunden</p>
+            <Package className="mx-auto w-16 h-16 text-gray-800 mb-4" />
+            <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">Nichts gefunden</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -259,7 +273,7 @@ export default function App() {
                   {item.image ? (
                     <img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={item.name} />
                   ) : (
-                    <ImageIcon className="text-gray-900 group-hover:text-gray-800 transition-colors" size={64} strokeWidth={1} />
+                    <ImageIcon className="text-gray-900" size={64} strokeWidth={1} />
                   )}
                   {item.status === 'Ausgeliehen' && (
                     <div className="absolute inset-0 bg-orange-950/40 backdrop-blur-[2px] flex items-center justify-center">
@@ -272,10 +286,10 @@ export default function App() {
                 <div className="p-7 flex-1 flex flex-col">
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex-1 min-w-0 pr-2">
-                      <span className={`text-[9px] uppercase font-black tracking-widest block mb-1.5 ${item.location === 'Bastelraum' ? 'text-blue-500' : 'text-purple-500'}`}>{item.location}</span>
+                      <span className="text-[9px] uppercase font-black tracking-widest block mb-1.5 text-orange-500/70">{item.location}</span>
                       <h3 className="text-lg font-bold text-white truncate leading-tight">{item.name}</h3>
                     </div>
-                    <button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 p-1.5 transition-colors"><Trash2 size={16} /></button>
+                    <button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                   </div>
                   
                   <div className="mt-auto bg-black/40 p-4 rounded-3xl border border-gray-800/50 flex items-center justify-between shadow-inner">
@@ -291,7 +305,7 @@ export default function App() {
                     onClick={() => toggleStatus(item.id, item.status)} 
                     className={`mt-5 w-full py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 ${item.status === 'Ausgeliehen' ? 'bg-orange-600/10 text-orange-500 border border-orange-500/20 hover:bg-orange-600/20' : 'bg-gray-800/40 text-gray-600 border border-transparent hover:bg-gray-800/80 hover:text-gray-400'}`}
                   >
-                    {item.status === 'Ausgeliehen' ? <><User size={14} /> Verfügbar machen</> : <><CheckCircle2 size={14} /> Ausgeliehen markieren</>}
+                    {item.status === 'Ausgeliehen' ? 'Verfügbar machen' : 'Ausgeliehen markieren'}
                   </button>
                 </div>
               </div>
@@ -300,6 +314,7 @@ export default function App() {
         )}
       </main>
 
+      {/* Modal - Hinzufügen */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md">
           <div className="bg-[#161616] border border-gray-800 w-full max-w-md rounded-[3rem] p-8 shadow-2xl overflow-y-auto max-h-[90vh] no-scrollbar">
@@ -328,36 +343,41 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Menge</label>
-                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
+                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Anzahl</label>
+                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Min. Bestand</label>
-                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500/50" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                  <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Warnung ab</label>
+                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Lagerort</label>
+                <label className="text-[10px] text-gray-500 uppercase font-black ml-2 tracking-widest">Ort</label>
                 <div className="grid grid-cols-2 gap-3">
                   <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'bg-black text-gray-700 border border-gray-800'}`}>Bastelraum</button>
                   <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${newItem.location === 'Archivraum' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' : 'bg-black text-gray-700 border border-gray-800'}`}>Archiv</button>
                 </div>
               </div>
-              <button type="submit" className="w-full bg-orange-600 hover:bg-orange-500 p-5 rounded-[2rem] font-black text-white uppercase tracking-[0.2em] shadow-xl shadow-orange-900/30 active:scale-95 transition-all mt-6 italic">Artikel Speichern</button>
+              <button type="submit" className="w-full bg-orange-600 hover:bg-orange-500 p-5 rounded-[2rem] font-black text-white uppercase tracking-[0.2em] shadow-xl shadow-orange-900/30 active:scale-95 transition-all mt-6 italic">Speichern</button>
             </form>
           </div>
         </div>
       )}
 
+      {/* Modal - Löschen */}
       {itemToDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/98 backdrop-blur-xl">
           <div className="bg-[#1a1a1a] p-10 rounded-[3.5rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
             <div className="w-20 h-20 bg-red-950/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6"><AlertTriangle size={40} /></div>
             <h3 className="text-xl font-black mb-4 italic text-white uppercase tracking-tighter">Wirklich löschen?</h3>
-            <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig aus dem Inventar entfernen?</p>
+            <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig entfernen?</p>
             <div className="flex gap-4">
-              <button onClick={() => setItemToDelete(null)} className="flex-1 bg-gray-800 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-gray-400 hover:text-white transition-colors">Nein</button>
-              <button onClick={confirmDelete} className="flex-1 bg-red-600 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-white shadow-lg shadow-red-900/30 active:scale-95 transition-all">Ja, löschen</button>
+              <button onClick={() => setItemToDelete(null)} className="flex-1 bg-gray-800 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-gray-400 hover:text-white transition-colors">Abbrechen</button>
+              <button onClick={async () => {
+                const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id);
+                await deleteDoc(itemRef);
+                setItemToDelete(null);
+              }} className="flex-1 bg-red-600 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest text-white shadow-lg shadow-red-900/30 active:scale-95 transition-all">Löschen</button>
             </div>
           </div>
         </div>
