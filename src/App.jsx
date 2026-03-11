@@ -43,7 +43,8 @@ import {
   query,
   getDocs,
   serverTimestamp,
-  arrayUnion
+  arrayUnion,
+  where
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -109,12 +110,11 @@ export default function App() {
 
   const [newMemberName, setNewMemberName] = useState({ first: '', last: '' });
 
-  // 1. Authentifizierung & User Daten
+  // 1. Authentifizierung
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       try {
         if (u) {
-          // Lade Benutzerdaten aus der Registry
           const userDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', u.uid));
           if (userDoc.exists()) {
             setUserData(userDoc.data());
@@ -136,16 +136,14 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Daten-Sync (Echtzeit)
+  // 2. Daten-Synchronisation
   useEffect(() => {
     if (!user) return;
     
-    // Inventory Listener
     const invUnsub = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), (snap) => {
       setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => console.error("Firestore inv error:", err));
 
-    // Members Listener
     const memUnsub = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), (snap) => {
       setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => console.error("Firestore mem error:", err));
@@ -162,7 +160,7 @@ export default function App() {
     const fullName = `${authForm.firstName.trim()} ${authForm.lastName.trim()}`;
     
     try {
-      // REGEL-KONFORM: Wir laden alle Mitglieder und filtern in JS, um Index-Fehler zu vermeiden
+      // REGEL-KONFORM: Wir laden alle Mitglieder und filtern lokal
       const memberRef = collection(db, 'artifacts', appId, 'public', 'data', 'member_registry');
       const querySnapshot = await getDocs(memberRef);
       const allMembers = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -173,14 +171,12 @@ export default function App() {
         setTargetMember(memberMatch);
         setAuthStep(memberMatch.isInitialized ? 'login' : 'setup_password');
       } else if (fullName.toLowerCase() === 'raphael drago') {
-        // Initialer Admin Setup
         setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
         setAuthStep('setup_password');
       } else {
-        setAuthError("Name nicht auf der Liste. Admin muss dich zuerst erfassen.");
+        setAuthError("Name nicht auf der Liste. Ein Admin muss dich zuerst erfassen.");
       }
     } catch (err) {
-      console.error("Identify Error:", err);
       setAuthError("Verbindung zum Server fehlgeschlagen.");
     } finally {
       setIsAuthChecking(false);
@@ -206,7 +202,6 @@ export default function App() {
           createdAt: serverTimestamp()
         });
         
-        // Platzhalter löschen falls vorhanden
         if (targetMember.id && targetMember.id !== userCredential.user.uid) {
             await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', targetMember.id));
         }
@@ -217,7 +212,7 @@ export default function App() {
       if (err.code === 'auth/wrong-password') {
         setAuthError("Passwort ist nicht korrekt.");
       } else {
-        setAuthError("Fehler bei der Anmeldung.");
+        setAuthError("Anmeldung fehlgeschlagen.");
       }
     } finally {
       setIsAuthChecking(false);
@@ -226,23 +221,23 @@ export default function App() {
 
   const updateQty = async (item, delta, specificType = null) => {
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id);
-    let newQty = item.quantity;
+    let newQty = item.quantity || 0;
     let newBorrowed = item.borrowedQuantity || 0;
 
     if (specificType === 'ausgeliehen') {
-        if (item.quantity <= 0) return;
-        newQty = item.quantity - 1;
+        if (newQty <= 0) return;
+        newQty -= 1;
         newBorrowed += 1;
     } else if (specificType === 'zurückgebracht') {
         if (newBorrowed <= 0) return;
-        newQty = item.quantity + 1;
+        newQty += 1;
         newBorrowed -= 1;
     } else {
-        newQty = Math.max(0, item.quantity + delta);
+        newQty = Math.max(0, newQty + delta);
     }
 
     const logEntry = {
-      user: user.displayName,
+      user: user.displayName || 'Unbekannt',
       action: specificType || (delta > 0 ? 'ausgelegt' : 'entnommen'),
       amount: 1,
       timestamp: new Date().toISOString()
@@ -251,7 +246,7 @@ export default function App() {
     await updateDoc(itemRef, { 
       quantity: newQty, 
       borrowedQuantity: newBorrowed,
-      updatedBy: user.displayName,
+      updatedBy: user.displayName || 'System',
       updatedAt: new Date().toISOString(),
       lastAction: `${user.displayName}: ${logEntry.action}`,
       history: arrayUnion(logEntry)
@@ -264,15 +259,15 @@ export default function App() {
     setIsSaving(true);
 
     const trimmedName = newItem.name.trim();
-    const existingItem = items.find(i => i.name.toLowerCase() === trimmedName.toLowerCase());
+    const existingItem = items.find(i => (i.name || "").toLowerCase() === trimmedName.toLowerCase());
     const tagArray = newItem.tags ? newItem.tags.split(',').map(t => t.trim()).filter(t => t) : [];
 
     try {
       if (existingItem) {
-        const addedQty = parseInt(newItem.quantity);
+        const addedQty = parseInt(newItem.quantity) || 0;
         const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', existingItem.id);
         await updateDoc(itemRef, {
-          quantity: existingItem.quantity + addedQty,
+          quantity: (existingItem.quantity || 0) + addedQty,
           updatedBy: user.displayName,
           updatedAt: new Date().toISOString(),
           history: arrayUnion({ user: user.displayName, action: 'Bestand addiert', amount: addedQty, timestamp: new Date().toISOString() })
@@ -282,8 +277,8 @@ export default function App() {
           ...newItem,
           name: trimmedName,
           tags: tagArray,
-          quantity: parseInt(newItem.quantity),
-          minStock: parseInt(newItem.minStock),
+          quantity: parseInt(newItem.quantity) || 0,
+          minStock: parseInt(newItem.minStock) || 0,
           borrowedQuantity: 0,
           updatedBy: user.displayName,
           updatedAt: new Date().toISOString(),
@@ -299,24 +294,36 @@ export default function App() {
     }
   };
 
+  const exportToExcel = () => {
+    const headers = ["Name", "Bestand", "Ausgeliehen", "Lagerort", "Warn-Limit"];
+    const csvContent = [headers.join(";"), ...items.map(i => [i.name || '-', i.quantity || 0, i.borrowedQuantity || 0, i.location || '-', i.minStock || 0].join(";"))].join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Inventar_RS_${new Date().toLocaleDateString()}.csv`;
+    link.click();
+  };
+
   const filteredItems = useMemo(() => {
     return items.filter(i => {
+      const name = i.name || "";
+      const tags = i.tags || [];
       const searchLower = searchTerm.toLowerCase();
-      const matchesSearch = i.name.toLowerCase().includes(searchLower) || (i.tags && i.tags.some(t => t.toLowerCase().includes(searchLower)));
+      const matchesSearch = name.toLowerCase().includes(searchLower) || tags.some(t => t.toLowerCase().includes(searchLower));
       const matchesLocation = filterLocation === 'All' || i.location === filterLocation;
       
       let matchesType = true;
       if (filterType === 'Ausgeliehen') {
         matchesType = (i.borrowedQuantity || 0) > 0;
       } else if (filterType === 'Besorgen') {
-        matchesType = i.quantity <= i.minStock;
+        matchesType = (i.quantity || 0) <= (i.minStock || 0);
       }
 
       return matchesSearch && matchesLocation && matchesType;
-    }).sort((a, b) => a.name.localeCompare(b.name));
+    }).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }, [items, searchTerm, filterLocation, filterType]);
 
-  const besorgenCount = items.filter(i => i.quantity <= i.minStock).length;
+  const besorgenCount = items.filter(i => (i.quantity || 0) <= (i.minStock || 0)).length;
   const ausgeliehenCount = items.filter(i => (i.borrowedQuantity || 0) > 0).length;
 
   const isUserAdmin = userData?.role === 'admin' || user?.displayName === 'Raphael Drago';
@@ -324,7 +331,7 @@ export default function App() {
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4">
       <Loader2 className="w-12 h-12 text-orange-500 animate-spin mb-4" />
-      <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px] animate-pulse italic">Lager-Cloud wird synchronisiert...</p>
+      <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Lager-Cloud wird synchronisiert...</p>
     </div>
   );
 
@@ -347,7 +354,7 @@ export default function App() {
               </>
             ) : (
               <div className="space-y-2 animate-in fade-in slide-in-from-right-2">
-                <p className="text-xs text-orange-500 font-bold text-center mb-4 uppercase">Hallo {targetMember.fullName}</p>
+                <p className="text-xs text-orange-500 font-bold text-center mb-4 uppercase tracking-tighter">Hallo {targetMember?.fullName}</p>
                 <div className="relative">
                   <KeyRound className="absolute left-4 top-4 text-gray-700" size={18} />
                   <input required autoFocus type="password" placeholder="Passwort" className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
@@ -430,8 +437,10 @@ export default function App() {
           viewMode === 'grid' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredItems.map(item => {
-                const bedarf = Math.max(0, item.minStock - item.quantity);
-                const isCritical = item.quantity <= item.minStock;
+                const quantity = item.quantity || 0;
+                const minStock = item.minStock || 0;
+                const bedarf = Math.max(0, minStock - quantity);
+                const isCritical = quantity <= minStock;
                 return (
                   <div key={item.id} className={`bg-[#161616] rounded-[2.5rem] overflow-hidden border border-gray-800 shadow-xl flex flex-col group hover:border-gray-700 transition-all ${isCritical ? 'ring-1 ring-red-500/30' : ''}`}>
                     <div className="h-44 bg-black flex items-center justify-center relative overflow-hidden border-b border-gray-800/50">
@@ -441,10 +450,10 @@ export default function App() {
                     </div>
                     <div className="p-6 flex-1 flex flex-col">
                       <div className="flex justify-between items-start mb-1">
-                        <h3 className="font-bold text-lg text-white truncate pr-2 leading-tight">{item.name}</h3>
+                        <h3 className="font-bold text-lg text-white truncate pr-2 leading-tight">{item.name || 'Unbenannt'}</h3>
                         <button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
                       </div>
-                      <div className="flex gap-2 items-center mb-4 text-[9px] text-gray-600 font-bold uppercase tracking-widest italic">{item.location}</div>
+                      <div className="flex gap-2 items-center mb-4 text-[9px] text-gray-600 font-bold uppercase tracking-widest italic">{item.location || '-'}</div>
 
                       {item.tags && item.tags.length > 0 && (
                         <div className="flex flex-wrap gap-1 mb-4">
@@ -457,14 +466,14 @@ export default function App() {
                       <div className="flex items-center justify-between bg-black/40 p-4 rounded-2xl border border-gray-800/50 shadow-inner">
                         <button onClick={() => updateQty(item, -1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 text-gray-400 transition-colors"><Minus size={18}/></button>
                         <div className="text-center">
-                          <span className={`text-3xl font-black ${item.quantity <= item.minStock ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span>
-                          <span className="block text-[8px] text-gray-600 font-bold uppercase mt-1 tracking-tighter">{item.unit || 'Stk.'} (Limit: {item.minStock})</span>
+                          <span className={`text-3xl font-black ${isCritical ? 'text-red-500' : 'text-orange-500'}`}>{quantity}</span>
+                          <span className="block text-[8px] text-gray-600 font-bold uppercase mt-1 tracking-tighter">{item.unit || 'Stk.'} (Limit: {minStock})</span>
                         </div>
                         <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 text-gray-400 transition-colors"><Plus size={18}/></button>
                       </div>
 
                       <div className="grid grid-cols-2 gap-2 mt-4">
-                          <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={item.quantity <= 0} className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 border-orange-500/20 text-orange-500 hover:bg-orange-500/10`}>Ausleihen</button>
+                          <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={quantity <= 0} className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 border-orange-500/20 text-orange-500 hover:bg-orange-500/10`}>Ausleihen</button>
                           <button onClick={() => updateQty(item, 0, 'zurückgebracht')} disabled={!item.borrowedQuantity} className="flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase bg-green-600/10 border border-green-500/20 text-green-500 hover:bg-green-600/20 disabled:opacity-30">Zurück</button>
                       </div>
 
@@ -480,26 +489,28 @@ export default function App() {
           ) : (
             <div className="bg-[#161616] border border-gray-800 rounded-[2rem] overflow-hidden divide-y divide-gray-800 shadow-2xl mb-12">
               {filteredItems.map(item => {
-                const isCritical = item.quantity <= item.minStock;
+                const quantity = item.quantity || 0;
+                const minStock = item.minStock || 0;
+                const isCritical = quantity <= minStock;
                 return (
                   <div key={item.id} className="p-4 flex items-center gap-4 hover:bg-black/20 transition-all group">
                     <div className="w-14 h-14 rounded-2xl bg-black flex-shrink-0 overflow-hidden flex items-center justify-center border border-gray-800 group-hover:border-orange-500/30 transition-colors shadow-inner">
                       {item.image ? <img src={item.image} className="w-full h-full object-cover" alt="" /> : <ImageIcon className="text-gray-900" size={24} />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-bold text-white truncate text-sm leading-tight">{item.name}</h3>
-                      <div className="flex gap-2 items-center mt-1 text-[8px] font-black uppercase text-gray-600 tracking-widest">{item.location} {(item.borrowedQuantity || 0) > 0 && <span className="text-orange-500 border border-orange-500/20 px-1.5 rounded-md ml-2">Verliehen: {item.borrowedQuantity}</span>}</div>
+                      <h3 className="font-bold text-white truncate text-sm leading-tight">{item.name || 'Unbenannt'}</h3>
+                      <div className="flex gap-2 items-center mt-1 text-[8px] font-black uppercase text-gray-600 tracking-widest">{item.location || '-'} {(item.borrowedQuantity || 0) > 0 && <span className="text-orange-500 border border-orange-500/20 px-1.5 rounded-md ml-2">Verliehen: {item.borrowedQuantity}</span>}</div>
                     </div>
                     <div className="flex items-center gap-3 bg-black/40 px-4 py-2 rounded-2xl border border-gray-800 shadow-inner">
                       <button onClick={() => updateQty(item, -1)} className="text-gray-500 hover:text-white transition-colors"><Minus size={16}/></button>
                       <div className="flex flex-col items-center">
-                        <span className={`text-xl font-black min-w-[2ch] text-center ${isCritical ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span>
+                        <span className={`text-xl font-black min-w-[2ch] text-center ${isCritical ? 'text-red-500' : 'text-orange-500'}`}>{quantity}</span>
                         <span className="text-[7px] text-gray-700 font-bold uppercase">{item.unit || 'Stk.'}</span>
                       </div>
                       <button onClick={() => updateQty(item, 1)} className="text-gray-500 hover:text-white transition-colors"><Plus size={16}/></button>
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
-                      <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={item.quantity <= 0} className="p-2.5 bg-orange-600/10 text-orange-500 rounded-xl hover:bg-orange-600/20 transition-all disabled:opacity-30 border border-orange-500/10"><ArrowRightLeft size={18}/></button>
+                      <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={quantity <= 0} className="p-2.5 bg-orange-600/10 text-orange-500 rounded-xl hover:bg-orange-600/20 transition-all disabled:opacity-30 border border-orange-500/10"><ArrowRightLeft size={18}/></button>
                       <button onClick={() => setItemToDelete(item)} className="p-2.5 text-gray-700 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
                     </div>
                   </div>
@@ -510,11 +521,10 @@ export default function App() {
         )}
       </main>
 
-      {/* MODALS: Admin Panel, New Item, Delete Dialog (Code remains as defined in requirements) */}
+      {/* ADMIN PANEL */}
       {isAdminPanelOpen && (
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in fade-in duration-300">
-           {/* Admin UI code... */}
-           <div className="bg-[#161616] w-full max-w-2xl rounded-[2.5rem] border border-orange-500/10 shadow-2xl flex flex-col max-h-[90vh]">
+          <div className="bg-[#161616] w-full max-w-2xl rounded-[2.5rem] border border-orange-500/10 shadow-2xl flex flex-col max-h-[90vh]">
             <div className="p-8 border-b border-gray-800 flex justify-between items-center bg-[#1a1a1a]">
               <div className="flex items-center gap-3">
                 <ShieldCheck className="text-orange-500" size={24} />
@@ -526,7 +536,10 @@ export default function App() {
               <button onClick={() => setIsAdminPanelOpen(false)} className="bg-gray-800 p-3 rounded-2xl hover:bg-gray-700 transition-colors"><X size={20}/></button>
             </div>
             <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar">
-              <div className="space-y-4">
+              <button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-3xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl">
+                <FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)
+              </button>
+              <div className="space-y-4 pt-4 border-t border-gray-800">
                 <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied hinzufügen</h3>
                 <form onSubmit={async (e) => {
                   e.preventDefault();
@@ -536,7 +549,7 @@ export default function App() {
                 }} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500 transition-all" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} />
                   <input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500 transition-all" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} />
-                  <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Hinzufügen</button>
+                  <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button>
                 </form>
               </div>
               <div className="space-y-4 pb-4">
@@ -547,7 +560,7 @@ export default function App() {
                       <div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div>
                       <div className="flex gap-2">
                         {m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}
-                        {m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Entfernen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}
+                        {m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Mitglied entfernen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}
                       </div>
                     </div>
                   ))}
@@ -558,12 +571,13 @@ export default function App() {
         </div>
       )}
 
+      {/* NEW ITEM MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/90 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in zoom-in-95 duration-300">
           <div className="bg-[#161616] w-full max-w-md rounded-[3rem] p-8 border border-gray-800 shadow-2xl overflow-y-auto max-h-[90vh] no-scrollbar">
             <div className="flex justify-between items-center mb-8">
               <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Artikel aufnehmen</h2>
-              <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2.5 rounded-full text-gray-400 hover:text-white"><X size={20}/></button>
+              <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2.5 rounded-full text-gray-400 hover:text-white transition-colors"><X size={20}/></button>
             </div>
             <form onSubmit={handleSaveItem} className="space-y-6">
               <div onClick={() => fileInputRef.current.click()} className="h-44 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex items-center justify-center overflow-hidden cursor-pointer relative group hover:border-orange-500 transition-all shadow-inner">
@@ -582,6 +596,7 @@ export default function App() {
         </div>
       )}
 
+      {/* DELETE DIALOG */}
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in duration-300">
           <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
