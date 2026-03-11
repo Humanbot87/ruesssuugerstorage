@@ -33,6 +33,7 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'ruess-suuger-storage
 export default function App() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterLocation, setFilterLocation] = useState('All');
@@ -44,8 +45,9 @@ export default function App() {
     name: '', quantity: 1, location: 'Bastelraum', minStock: 0, status: 'Verfügbar', image: null
   });
 
-  // Schritt 1: Authentifizierung (Regel 3 befolgen)
+  // Schritt 1: Authentifizierung (Regel 3)
   useEffect(() => {
+    let isMounted = true;
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -55,31 +57,47 @@ export default function App() {
         }
       } catch (err) {
         console.error("Auth-Fehler:", err);
-        // Auch bei Fehler versuchen wir die UI anzuzeigen, falls anonym möglich ist
-        if (!auth.currentUser) {
-           signInAnonymously(auth).catch(e => console.error("Anonyme Auth fehlgeschlagen", e));
-        }
+        if (isMounted) setError("Anmeldung an der Cloud fehlgeschlagen. Bitte prüfe die Internetverbindung.");
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      if (isMounted) setUser(u);
+    });
+
+    // Sicherheits-Timeout für den Ladebildschirm
+    const timeout = setTimeout(() => {
+      if (isMounted && loading) {
+        setLoading(false);
+        if (!items.length) setError("Die Cloud-Verbindung dauert zu lange. Bitte Seite neu laden.");
+      }
+    }, 10000);
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      clearTimeout(timeout);
+    };
   }, []);
 
-  // Schritt 2: Daten laden (Regel 1 & 2 befolgen)
+  // Schritt 2: Daten laden (Regel 1 & 2)
   useEffect(() => {
     if (!user) return;
 
-    // Pfad: /artifacts/{appId}/public/data/inventory
     const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
     
     const unsubscribe = onSnapshot(inventoryRef, (snapshot) => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setItems(data);
       setLoading(false);
+      setError(null);
     }, (err) => {
       console.error("Firestore-Fehler:", err);
-      // Wir setzen loading auf false, damit der User zumindest eine Fehlermeldung sieht statt des Hängens
+      if (err.code === 'permission-denied') {
+        setError("Zugriff verweigert! Bitte prüfe deine Firebase Firestore Regeln.");
+      } else {
+        setError("Fehler beim Abrufen der Daten: " + err.message);
+      }
       setLoading(false);
     });
 
@@ -122,7 +140,8 @@ export default function App() {
       setNewItem({ name: '', quantity: 1, location: 'Bastelraum', minStock: 0, status: 'Verfügbar', image: null });
       setIsModalOpen(false);
     } catch (err) { 
-      console.error("Fehler beim Speichern:", err); 
+      console.error("Fehler beim Speichern:", err);
+      alert("Fehler beim Speichern. Bitte Berechtigungen prüfen.");
     }
   };
 
@@ -154,34 +173,43 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center">
+      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-4">
         <Loader2 className="animate-spin text-orange-500 w-12 h-12 mb-4" />
-        <p className="text-gray-500 text-xs font-bold uppercase tracking-widest">Verbindung zum Lager wird hergestellt...</p>
+        <p className="text-gray-500 text-[10px] font-black uppercase tracking-[0.2em] animate-pulse">Lager-Cloud wird geladen...</p>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-gray-200 selection:bg-orange-500/30">
-      <header className="border-b border-gray-800 bg-[#111] sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
-        <h1 className="text-xl font-black uppercase tracking-tighter italic">
+      <header className="border-b border-gray-800 bg-[#111]/90 backdrop-blur-md sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
+        <h1 className="text-xl font-black uppercase tracking-tighter italic flex items-baseline gap-1">
           <span className="text-gray-500">Rüss</span>
           <span className="text-orange-500">Suuger</span> 
-          <span className="text-gray-400 ml-2 not-italic">Ämme</span>
+          <span className="text-gray-400 ml-1 not-italic text-[10px] tracking-widest uppercase">Ämme</span>
         </h1>
-        <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 p-2 rounded-xl text-white transition-all shadow-lg active:scale-95">
-          <PlusCircle size={24} />
+        <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg shadow-orange-900/20 active:scale-95 transition-all">
+          <PlusCircle size={20} />
         </button>
       </header>
 
       <main className="p-4 max-w-6xl mx-auto pb-20">
+        {error && (
+          <div className="mb-8 bg-red-950/20 border border-red-900/30 p-6 rounded-[2rem] flex flex-col items-center text-center">
+            <AlertCircle className="text-red-500 mb-3" size={32} />
+            <h2 className="text-white font-bold mb-1 uppercase tracking-tighter italic">Hoppla, ein Fehler!</h2>
+            <p className="text-red-400 text-xs mb-4">{error}</p>
+            <button onClick={() => window.location.reload()} className="text-[10px] uppercase font-black tracking-widest bg-red-600 text-white px-6 py-2.5 rounded-xl shadow-lg">Neu versuchen</button>
+          </div>
+        )}
+
         <div className="flex flex-col gap-4 mb-8">
           <div className="relative">
-            <Search className="absolute left-3 top-3.5 text-gray-600" size={18} />
+            <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
             <input 
               type="text" 
               placeholder="Inventar durchsuchen..." 
-              className="w-full bg-[#161616] p-3.5 pl-10 rounded-2xl outline-none border border-gray-800 focus:border-orange-500/50 transition-all text-white placeholder:text-gray-700" 
+              className="w-full bg-[#161616] p-3.5 pl-12 rounded-2xl outline-none border border-gray-800 focus:border-orange-500/50 transition-all text-white shadow-inner" 
               value={searchTerm} 
               onChange={e => setSearchTerm(e.target.value)} 
             />
@@ -191,7 +219,7 @@ export default function App() {
               <button 
                 key={loc}
                 onClick={() => setFilterLocation(loc)} 
-                className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 text-white shadow-lg' : 'bg-gray-800/40 text-gray-600 hover:text-gray-400'}`}
+                className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/20' : 'bg-gray-800/40 text-gray-500 hover:text-gray-300'}`}
               >
                 {loc === 'All' ? 'Alle Räume' : loc}
               </button>
@@ -199,10 +227,10 @@ export default function App() {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && !error ? (
           <div className="text-center py-20 border-2 border-dashed border-gray-800 rounded-[2.5rem] bg-[#0d0d0d]">
              <Package className="mx-auto w-16 h-16 text-gray-800 mb-4" strokeWidth={1} />
-             <p className="text-gray-600 font-bold uppercase tracking-widest text-[10px]">Keine Artikel gefunden</p>
+             <p className="text-gray-600 font-bold uppercase tracking-widest text-[10px]">Noch keine Artikel vorhanden</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -222,7 +250,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                <div className="p-6 flex-1 flex flex-col">
+                <div className="p-7 flex-1 flex flex-col">
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex-1 min-w-0 pr-2">
                       <span className="text-[9px] uppercase font-black text-orange-500/70 tracking-widest block mb-1">{item.location}</span>
@@ -232,19 +260,19 @@ export default function App() {
                   </div>
                   
                   <div className="mt-auto bg-black/40 p-4 rounded-3xl border border-gray-800/50 flex items-center justify-between shadow-inner">
-                    <button onClick={() => updateQty(item.id, -1)} className="p-2.5 bg-gray-800 rounded-xl hover:bg-gray-700 active:scale-90 transition-all text-gray-400"><Minus size={18}/></button>
+                    <button onClick={() => updateQty(item.id, -1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 active:scale-90 transition-all text-gray-400"><Minus size={18}/></button>
                     <div className="text-center">
                       <span className={`text-3xl font-black tracking-tighter ${item.quantity <= (item.minStock || 0) ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span>
-                      <span className="block text-[8px] text-gray-600 uppercase font-bold tracking-widest mt-0.5">Stück</span>
+                      <span className="block text-[8px] text-gray-600 uppercase font-bold tracking-widest mt-0.5 italic">Stück</span>
                     </div>
-                    <button onClick={() => updateQty(item.id, 1)} className="p-2.5 bg-gray-800 rounded-xl hover:bg-gray-700 active:scale-90 transition-all text-gray-400"><Plus size={18}/></button>
+                    <button onClick={() => updateQty(item.id, 1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 active:scale-90 transition-all text-gray-400"><Plus size={18}/></button>
                   </div>
 
                   <button 
                     onClick={() => toggleStatus(item.id, item.status)} 
-                    className={`w-full mt-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 ${item.status === 'Ausgeliehen' ? 'bg-orange-600/10 text-orange-500 border border-orange-500/20 hover:bg-orange-600/20' : 'bg-gray-800/40 text-gray-600 border border-transparent hover:bg-gray-800/80 hover:text-gray-400'}`}
+                    className={`w-full mt-5 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 ${item.status === 'Ausgeliehen' ? 'bg-orange-600/10 text-orange-500 border border-orange-500/20 hover:bg-orange-600/20' : 'bg-gray-800/40 text-gray-600 border border-transparent hover:bg-gray-800/80 hover:text-gray-400'}`}
                   >
-                    {item.status === 'Ausgeliehen' ? 'Verfügbar machen' : 'Ausgeliehen markieren'}
+                    {item.status === 'Ausgeliehen' ? <><User size={14} /> Verfügbar machen</> : <><CheckCircle2 size={14} /> Ausgeliehen markieren</>}
                   </button>
                 </div>
               </div>
@@ -258,30 +286,42 @@ export default function App() {
           <div className="bg-[#161616] w-full max-w-md rounded-[3rem] p-8 border border-gray-800 shadow-2xl animate-in fade-in zoom-in duration-300">
             <div className="flex justify-between items-center mb-8">
               <h2 className="text-2xl font-black italic text-white uppercase tracking-tighter">Neuer Artikel</h2>
-              <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white"><X size={20}/></button>
+              <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2.5 rounded-full text-gray-400 hover:text-white"><X size={20}/></button>
             </div>
-            <form onSubmit={handleAddItem} className="space-y-5">
-              <div onClick={() => fileInputRef.current.click()} className="h-40 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex flex-col items-center justify-center overflow-hidden cursor-pointer hover:border-orange-500/50 transition-all">
-                {newItem.image ? (
-                  <img src={newItem.image} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="text-center">
-                    <Camera className="mx-auto text-gray-800 mb-2" size={32}/>
-                    <p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">Foto aufnehmen</p>
-                  </div>
-                )}
-                <input type="file" ref={fileInputRef} hidden accept="image/*" capture="environment" onChange={handleImageChange} />
+            <form onSubmit={handleAddItem} className="space-y-6">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Foto aufnehmen</label>
+                <div onClick={() => fileInputRef.current.click()} className="h-44 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex flex-col items-center justify-center overflow-hidden cursor-pointer hover:border-orange-500/50 transition-all group">
+                  {newItem.image ? (
+                    <img src={newItem.image} className="w-full h-full object-cover" alt="Vorschau" />
+                  ) : (
+                    <div className="text-center">
+                      <Camera className="mx-auto text-gray-800 mb-2 group-hover:text-orange-500/50 transition-colors" size={32}/>
+                      <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Kamera öffnen</p>
+                    </div>
+                  )}
+                  <input type="file" ref={fileInputRef} hidden accept="image/*" capture="environment" onChange={handleImageChange} />
+                </div>
               </div>
-              <input required type="text" placeholder="Bezeichnung..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 focus:border-orange-500/50 text-white transition-all" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Bezeichnung</label>
+                <input required type="text" placeholder="z.B. Schminke, Klebeband..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 focus:border-orange-500/50 text-white transition-all shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+              </div>
               <div className="grid grid-cols-2 gap-4">
-                <input type="number" placeholder="Menge" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
-                <input type="number" placeholder="Warnlimit" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Menge</label>
+                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-black text-gray-500 tracking-widest ml-2">Warnlimit</label>
+                  <input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg' : 'bg-black text-gray-700 border border-gray-800'}`}>Bastelraum</button>
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg' : 'bg-black text-gray-600 border border-gray-800'}`}>Bastelraum</button>
                 <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Archivraum' ? 'bg-purple-600 text-white shadow-lg' : 'bg-black text-gray-700 border border-gray-800'}`}>Archiv</button>
               </div>
-              <button type="submit" className="w-full bg-orange-600 p-5 rounded-3xl font-black text-white uppercase tracking-[0.2em] shadow-xl shadow-orange-900/30 hover:bg-orange-500 active:scale-95 transition-all mt-4 italic">Artikel Speichern</button>
+              <button type="submit" className="w-full bg-orange-600 hover:bg-orange-500 p-5 rounded-[2rem] font-black text-white uppercase tracking-[0.2em] shadow-xl shadow-orange-900/30 active:scale-95 transition-all mt-4 italic">Artikel Speichern</button>
             </form>
           </div>
         </div>
@@ -289,17 +329,17 @@ export default function App() {
 
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-md">
-          <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
+          <div className="bg-[#1a1a1a] p-10 rounded-[3.5rem] text-center border border-red-900/20 max-w-sm shadow-2xl animate-in fade-in zoom-in duration-300">
             <div className="w-20 h-20 bg-red-950/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6"><AlertTriangle size={40} /></div>
             <h3 className="text-xl font-black mb-4 italic text-white uppercase tracking-tighter">Wirklich löschen?</h3>
-            <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig aus dem Inventar entfernen?</p>
-            <div className="flex gap-4">
-              <button onClick={() => setItemToDelete(null)} className="flex-1 bg-gray-800 py-4 rounded-2xl font-bold text-gray-400">Nein</button>
+            <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> endgültig entfernen?</p>
+            <div className="grid grid-cols-2 gap-4">
+              <button onClick={() => setItemToDelete(null)} className="py-4 rounded-2xl bg-gray-800 text-gray-400 font-black uppercase text-[10px] tracking-widest hover:text-white transition-colors">Nein</button>
               <button onClick={async () => {
                 const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id);
                 await deleteDoc(itemRef);
                 setItemToDelete(null);
-              }} className="flex-1 bg-red-600 py-4 rounded-2xl font-bold text-white shadow-lg shadow-red-900/30">Ja, löschen</button>
+              }} className="py-4 rounded-2xl bg-red-600 text-white font-black uppercase text-[10px] tracking-widest shadow-lg shadow-red-900/30 active:scale-95 transition-all">Ja, löschen</button>
             </div>
           </div>
         </div>
