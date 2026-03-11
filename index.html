@@ -32,8 +32,19 @@
       font-weight: 900;
       text-transform: uppercase;
       letter-spacing: -0.05em;
-      font-size: 1.5rem;
+      font-size: 1.8rem;
       font-style: italic;
+      display: flex;
+      align-items: baseline;
+      gap: 2px;
+    }
+
+    .subtitle {
+      font-style: normal;
+      font-size: 0.9rem;
+      letter-spacing: 0.2em;
+      margin-left: 8px;
+      font-weight: 700;
     }
   </style>
 </head>
@@ -42,15 +53,15 @@
     <div style="display: flex; height: 100vh; flex-direction: column; align-items: center; justify-content: center; background-color: #0a0a0a;">
       <div class="loader"></div>
       <div class="loading-text">
-        <span style="color: #6b7280;">Rüss</span><span style="color: #f97316;">Suuger</span> <span style="color: #9ca3af; font-style: normal; font-size: 0.8rem; letter-spacing: 0.2em; margin-left: 4px;">Ämme</span>
+        <span style="color: #6b7280;">Rüss</span><span style="color: #f97316;">Suuger</span>
+        <span class="subtitle" style="color: #6b7280;">Ämme <span style="color: #4b5563;">Storage</span></span>
       </div>
-      <p style="margin-top: 12px; color: #444; font-size: 10px; text-transform: uppercase; letter-spacing: 0.2em; font-weight: bold;">
-        Lager wird gestartet...
+      <p style="margin-top: 16px; color: #444; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3em; font-weight: bold;">
+        Lager-System wird initialisiert
       </p>
     </div>
   </div>
   
-  <!-- Stelle sicher, dass die Datei im src-Ordner auf GitHub 'App.jsx' heißt -->
   <script type="module" src="/src/App.jsx"></script>
 </body>
 </html>
