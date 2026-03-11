@@ -4,7 +4,7 @@ import {
   Plus, Minus, Search, Package, Trash2, PlusCircle, X, Loader2, 
   AlertCircle, LogOut, KeyRound, ShieldCheck, FileSpreadsheet, 
   Users, ChevronRight, UserPlus, ShieldAlert, ImageIcon, Camera, AlertTriangle, History,
-  ArrowRightLeft, RotateCcw
+  ArrowRightLeft, RotateCcw, ShoppingCart, Info
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
@@ -51,6 +51,7 @@ export default function App() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterLocation, setFilterLocation] = useState('All');
+  const [filterType, setFilterType] = useState('All'); // 'All', 'Ausgeliehen', 'Besorgen'
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null); 
@@ -160,7 +161,8 @@ export default function App() {
       updatedBy: user.displayName,
       updatedAt: new Date().toISOString(),
       lastAction: actionText,
-      history: arrayUnion(logEntry)
+      history: arrayUnion(logEntry),
+      currentStatus: type // Speichern des aktuellen Status für einfachere Filterung
     });
   };
 
@@ -203,6 +205,25 @@ export default function App() {
     link.click();
   };
 
+  const filteredItems = useMemo(() => {
+    return items.filter(i => {
+      const matchesSearch = i.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesLocation = filterLocation === 'All' || i.location === filterLocation;
+      
+      let matchesType = true;
+      if (filterType === 'Ausgeliehen') {
+        matchesType = i.currentStatus === 'ausgeliehen';
+      } else if (filterType === 'Besorgen') {
+        matchesType = i.quantity <= i.minStock;
+      }
+
+      return matchesSearch && matchesLocation && matchesType;
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }, [items, searchTerm, filterLocation, filterType]);
+
+  const besorgenCount = items.filter(i => i.quantity <= i.minStock).length;
+  const ausgeliehenCount = items.filter(i => i.currentStatus === 'ausgeliehen').length;
+
   if (loading) return <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center"><Loader2 className="animate-spin text-orange-500" /></div>;
 
   if (!user) {
@@ -243,7 +264,7 @@ export default function App() {
   const isUserAdmin = userData?.role === 'admin' || user.displayName === 'Raphael Drago';
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans">
+    <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30">
       <header className="border-b border-gray-800 bg-[#111] sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
         <div className="flex flex-col">
           <h1 className="text-lg font-black uppercase italic tracking-tighter leading-none">
@@ -264,69 +285,101 @@ export default function App() {
             <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
             <input type="text" placeholder="Gegenstand suchen..." className="w-full bg-[#161616] p-4 pl-12 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 transition-all shadow-inner" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-            {['All', 'Bastelraum', 'Archivraum'].map(loc => (
-              <button key={loc} onClick={() => setFilterLocation(loc)} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600 border-orange-500 text-white shadow-lg shadow-orange-900/20' : 'bg-gray-800/50 border-gray-800 text-gray-500 hover:text-gray-300'}`}>{loc === 'All' ? 'Alle' : loc}</button>
-            ))}
+          
+          <div className="space-y-3">
+            {/* Status Filter Tabs */}
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                <button 
+                    onClick={() => setFilterType('All')} 
+                    className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterType === 'All' ? 'bg-white border-white text-black' : 'bg-gray-800/30 border-gray-800 text-gray-500'}`}
+                >
+                    Alle Artikel
+                </button>
+                <button 
+                    onClick={() => setFilterType('Besorgen')} 
+                    className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap flex items-center gap-2 ${filterType === 'Besorgen' ? 'bg-red-600 border-red-500 text-white shadow-lg shadow-red-900/20' : 'bg-red-900/10 border-red-900/20 text-red-500/70'}`}
+                >
+                    <ShoppingCart size={14} /> Besorgen ({besorgenCount})
+                </button>
+                <button 
+                    onClick={() => setFilterType('Ausgeliehen')} 
+                    className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap flex items-center gap-2 ${filterType === 'Ausgeliehen' ? 'bg-orange-600 border-orange-500 text-white shadow-lg shadow-orange-900/20' : 'bg-orange-900/10 border-orange-900/20 text-orange-500/70'}`}
+                >
+                    <ArrowRightLeft size={14} /> Ausgeliehen ({ausgeliehenCount})
+                </button>
+            </div>
+
+            {/* Location Filter */}
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+              {['All', 'Bastelraum', 'Archivraum'].map(loc => (
+                <button key={loc} onClick={() => setFilterLocation(loc)} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-tighter border transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600/20 border-orange-500/50 text-orange-500' : 'bg-gray-800/20 border-gray-800/50 text-gray-600 hover:text-gray-400'}`}>{loc === 'All' ? 'Alle Räume' : loc}</button>
+              ))}
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {items.filter(i => (i.name.toLowerCase().includes(searchTerm.toLowerCase())) && (filterLocation === 'All' || i.location === filterLocation)).map(item => (
-            <div key={item.id} className="bg-[#161616] rounded-3xl overflow-hidden border border-gray-800 shadow-xl group hover:border-gray-700 transition-all flex flex-col">
-              <div className="h-44 bg-black flex items-center justify-center relative overflow-hidden border-b border-gray-800/50">
-                {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={item.name} /> : <ImageIcon className="text-gray-900 opacity-30" size={64} />}
-                {item.quantity <= (item.minStock || 0) && <div className="absolute top-2 left-2 bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase shadow-lg">Nachfüllen</div>}
-              </div>
-              <div className="p-5 flex-1 flex flex-col">
-                <div className="flex justify-between items-start mb-1">
-                  <h3 className="font-bold text-lg text-white truncate pr-2 leading-tight">{item.name}</h3>
-                  <button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
-                </div>
-                <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest mb-4 italic">{item.location}</p>
-                
-                <div className="flex items-center justify-between bg-black/40 p-4 rounded-2xl border border-gray-800/50 shadow-inner">
-                  <button onClick={() => updateQty(item, -1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Minus size={18}/></button>
-                  <div className="text-center">
-                    <span className={`text-3xl font-black ${item.quantity <= (item.minStock || 0) ? 'text-red-500 animate-pulse' : 'text-orange-500'}`}>{item.quantity}</span>
-                    <span className="block text-[8px] text-gray-600 font-bold uppercase mt-1">Limit: {item.minStock || 0}</span>
-                  </div>
-                  <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Plus size={18}/></button>
-                </div>
-
-                {/* Ausleih-Sektion */}
-                <div className="grid grid-cols-2 gap-2 mt-3">
-                    <button 
-                        onClick={() => updateQty(item, -1, 'ausgeliehen')}
-                        className="flex items-center justify-center gap-2 bg-orange-600/10 hover:bg-orange-600/20 border border-orange-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-orange-500 transition-all active:scale-95"
-                    >
-                        <ArrowRightLeft size={12} /> Ausleihen
-                    </button>
-                    <button 
-                        onClick={() => updateQty(item, 1, 'zurückgebracht')}
-                        className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95"
-                    >
-                        <RotateCcw size={12} /> Zurück
-                    </button>
-                </div>
-                
-                {/* Protokoll-Anzeige */}
-                <div className="mt-4 pt-3 border-t border-gray-800/50">
-                  <div className="flex items-center gap-2 text-[8px] font-black uppercase text-gray-500 mb-1">
-                    <History size={10} /> Letzte Bewegung
-                  </div>
-                  <p className="text-[10px] text-gray-400 font-medium italic line-clamp-1">
-                    {item.lastAction || 'Noch keine Bewegungen erfasst.'}
-                  </p>
-                  <div className="mt-2 flex justify-between items-center text-[7px] font-bold text-gray-700 uppercase tracking-tighter">
-                     <span>Zuletzt von: {item.updatedBy || 'System'}</span>
-                     <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ''}</span>
-                  </div>
-                </div>
-              </div>
+        {filteredItems.length === 0 ? (
+            <div className="text-center py-20 bg-black/20 border-2 border-dashed border-gray-800 rounded-[3rem]">
+                <Info size={48} className="mx-auto text-gray-800 mb-4" />
+                <p className="text-gray-600 font-bold uppercase tracking-widest text-xs italic">Nichts gefunden</p>
             </div>
-          ))}
-        </div>
+        ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filteredItems.map(item => (
+                <div key={item.id} className={`bg-[#161616] rounded-3xl overflow-hidden border border-gray-800 shadow-xl group hover:border-gray-700 transition-all flex flex-col ${item.quantity <= item.minStock ? 'ring-1 ring-red-500/30' : ''}`}>
+                <div className="h-44 bg-black flex items-center justify-center relative overflow-hidden border-b border-gray-800/50">
+                    {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={item.name} /> : <ImageIcon className="text-gray-900 opacity-30" size={64} />}
+                    {item.quantity <= (item.minStock || 0) && <div className="absolute top-2 left-2 bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase shadow-lg animate-pulse">Nachfüllen</div>}
+                    {item.currentStatus === 'ausgeliehen' && <div className="absolute top-2 right-2 bg-orange-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase shadow-lg">Ausgeliehen</div>}
+                </div>
+                <div className="p-5 flex-1 flex flex-col">
+                    <div className="flex justify-between items-start mb-1">
+                    <h3 className="font-bold text-lg text-white truncate pr-2 leading-tight">{item.name}</h3>
+                    <button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+                    </div>
+                    <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest mb-4 italic">{item.location}</p>
+                    
+                    <div className="flex items-center justify-between bg-black/40 p-4 rounded-2xl border border-gray-800/50 shadow-inner">
+                    <button onClick={() => updateQty(item, -1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Minus size={18}/></button>
+                    <div className="text-center">
+                        <span className={`text-3xl font-black ${item.quantity <= (item.minStock || 0) ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span>
+                        <span className="block text-[8px] text-gray-600 font-bold uppercase mt-1">Limit: {item.minStock || 0}</span>
+                    </div>
+                    <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Plus size={18}/></button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mt-3">
+                        <button 
+                            onClick={() => updateQty(item, -1, 'ausgeliehen')}
+                            className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 ${item.currentStatus === 'ausgeliehen' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-orange-600/10 hover:bg-orange-600/20 border-orange-500/20 text-orange-500'}`}
+                        >
+                            <ArrowRightLeft size={12} /> Ausleihen
+                        </button>
+                        <button 
+                            onClick={() => updateQty(item, 1, 'zurückgebracht')}
+                            className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95"
+                        >
+                            <RotateCcw size={12} /> Zurück
+                        </button>
+                    </div>
+                    
+                    <div className="mt-4 pt-3 border-t border-gray-800/50">
+                    <div className="flex items-center gap-2 text-[8px] font-black uppercase text-gray-500 mb-1">
+                        <History size={10} /> Status
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-medium italic line-clamp-1">
+                        {item.lastAction || 'Noch keine Bewegungen.'}
+                    </p>
+                    <div className="mt-2 flex justify-between items-center text-[7px] font-bold text-gray-700 uppercase tracking-tighter">
+                        <span>Letzter: {item.updatedBy || 'System'}</span>
+                        <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ''}</span>
+                    </div>
+                    </div>
+                </div>
+                </div>
+            ))}
+            </div>
+        )}
       </main>
 
       {/* ADMIN PANEL */}
@@ -337,7 +390,7 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <ShieldCheck className="text-orange-500" size={24} />
                 <div>
-                   <h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight">Admin Control</h2>
+                   <h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight text-white">Admin Control</h2>
                    <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Stammdaten & Mitglieder</p>
                 </div>
               </div>
@@ -384,7 +437,7 @@ export default function App() {
         <div className="fixed inset-0 bg-black/90 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in zoom-in-95 duration-300">
           <div className="bg-[#161616] w-full max-w-md rounded-[2.5rem] p-8 border border-gray-800 shadow-2xl overflow-y-auto max-h-[90vh] no-scrollbar">
             <div className="flex justify-between items-center mb-8">
-              <h2 className="text-xl font-black uppercase italic tracking-tighter">Neuaufnahme</h2>
+              <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Neuaufnahme</h2>
               <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2.5 rounded-full text-gray-400 hover:text-white transition-colors"><X size={20}/></button>
             </div>
             <form onSubmit={async (e) => {
@@ -393,7 +446,8 @@ export default function App() {
                 ...newItem, quantity: parseInt(newItem.quantity), minStock: parseInt(newItem.minStock),
                 updatedBy: user.displayName, updatedAt: new Date().toISOString(),
                 lastAction: `${user.displayName} hat den Artikel neu erfasst.`,
-                history: [{ user: user.displayName, action: 'erfasst', amount: newItem.quantity, timestamp: new Date().toISOString() }]
+                history: [{ user: user.displayName, action: 'erfasst', amount: newItem.quantity, timestamp: new Date().toISOString() }],
+                currentStatus: 'verfügbar'
               });
               setIsModalOpen(false);
               setNewItem({ name: '', quantity: 1, location: 'Bastelraum', minStock: 0, image: null });
@@ -439,7 +493,7 @@ export default function App() {
           <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
             <div className="w-20 h-20 bg-red-950/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={48} /></div>
             <h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight">Gegenstand löschen?</h3>
-            <p className="text-gray-600 text-sm mb-10 leading-relaxed">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich endgültig entfernen?</p>
+            <p className="text-gray-600 text-sm mb-10 leading-relaxed text-center">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich endgültig entfernen?</p>
             <div className="grid grid-cols-2 gap-4">
               <button onClick={() => setItemToDelete(null)} className="bg-gray-800 py-4 rounded-2xl font-bold text-gray-400 hover:text-white transition-all shadow-lg">Nein</button>
               <button onClick={async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id)); setItemToDelete(null); }} className="bg-red-600 py-4 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all">Ja, löschen</button>
