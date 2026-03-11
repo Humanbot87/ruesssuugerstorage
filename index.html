@@ -5,17 +5,49 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
 <title>RüssSuuger Ämme Storage</title>
+<!-- Korrekter Tailwind CDN Link -->
 <script src="https://www.google.com/search?q=https://cdn.tailwindcss.com"></script>
 <style>
-body { margin: 0; background-color: #0a0a0a; color: #e5e7eb; font-family: sans-serif; }
+body {
+margin: 0;
+background-color: #0a0a0a;
+color: #e5e7eb;
+font-family: sans-serif;
+}
+/* Korrigierter CSS Selektor ohne Backslash */
 * { -webkit-tap-highlight-color: transparent; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Einfache Lade-Animation direkt im HTML */
+.loader {
+  border: 3px solid #222;
+  border-top: 3px solid #f97316;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+
 </style>
 </head>
 <body>
-<div id="root"></div>
-<!-- WICHTIG: Der Pfad muss exakt zu deiner Datei im src-Ordner passen -->
+<div id="root">
+<!-- Dieser Inhalt wird von React ersetzt, sobald das Programm startet -->
+<div style="display: flex; height: 100vh; flex-direction: column; align-items: center; justify-content: center;">
+<div class="loader"></div>
+<p style="margin-top: 20px; color: #444; font-size: 10px; text-transform: uppercase; letter-spacing: 2px;">Lager wird gestartet...</p>
+</div>
+</div>
+
+<!-- WICHTIG: Stelle sicher, dass deine Datei auf GitHub im Ordner 'src' den Namen 'main.jsx' hat -->
+
 <script type="module" src="/src/main.jsx"></script>
+
 </body>
 </html>
