@@ -151,10 +151,13 @@ export default function App() {
       setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => console.error("Firestore mem error:", err));
 
-    return () => { invUnsub(); memUnsub(); };
+    return () => { 
+        if(invUnsub) invUnsub(); 
+        if(memUnsub) memUnsub(); 
+    };
   }, [user]);
 
-  const getInternalEmail = (name) => `${name.toLowerCase().trim().replace(/\s+/g, '.')}@rs.v2`;
+  const getInternalEmail = (name) => `${(name || "").toLowerCase().trim().replace(/\s+/g, '.')}@rs.v2`;
 
   const handleIdentify = async (e) => {
     e.preventDefault();
@@ -244,7 +247,7 @@ export default function App() {
     }
 
     const logEntry = {
-      user: user.displayName || 'Unbekannt',
+      user: user?.displayName || 'Unbekannt',
       action: specificType || (delta > 0 ? 'ausgelegt' : 'entnommen'),
       amount: 1,
       timestamp: new Date().toISOString()
@@ -253,9 +256,9 @@ export default function App() {
     await updateDoc(itemRef, { 
       quantity: newQty, 
       borrowedQuantity: newBorrowed,
-      updatedBy: user.displayName || 'System',
+      updatedBy: user?.displayName || 'System',
       updatedAt: new Date().toISOString(),
-      lastAction: `${user.displayName}: ${logEntry.action}`,
+      lastAction: `${user?.displayName || 'System'}: ${logEntry.action}`,
       history: arrayUnion(logEntry)
     });
   };
@@ -400,7 +403,7 @@ export default function App() {
             <span className="text-gray-500">Rüss</span><span className="text-orange-500">Suuger</span>
           </h1>
           <div className="flex items-center gap-1">
-            <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest">{user.displayName}</span>
+            <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest">{user?.displayName || "Gast"}</span>
             {isUserAdmin && <ShieldCheck size={10} className="text-orange-500" />}
           </div>
         </div>
@@ -442,7 +445,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Hinzufügen Button oberhalb der Artikel */}
         <button onClick={() => setIsModalOpen(true)} className="w-full flex items-center justify-center gap-3 bg-orange-600/10 border border-orange-500/20 hover:bg-orange-600/20 p-5 rounded-3xl transition-all mb-8 group shadow-xl">
           <PlusCircle className="text-orange-500 group-hover:scale-110 transition-transform" />
           <span className="font-black uppercase tracking-widest text-orange-500 text-xs italic">Neuer Artikel erfassen</span>
@@ -562,7 +564,7 @@ export default function App() {
               </button>
               
               <div className="space-y-4 pt-4 border-t border-gray-800">
-                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied hinzufügen</h3>
+                <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3>
                 <form onSubmit={async (e) => {
                   e.preventDefault();
                   const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`;
@@ -579,20 +581,20 @@ export default function App() {
                 <h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3>
                 <div className="grid gap-2">
                   {(members || []).map(m => (
-                    <div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group">
+                    <div key={m.id || Math.random()} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group">
                       <div>
-                        <p className="font-bold text-sm text-white">{m.fullName || "Unbekannt"}</p>
-                        <p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>
-                          {m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}
+                        <p className="font-bold text-sm text-white">{m?.fullName || "Unbekannt"}</p>
+                        <p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m?.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>
+                          {m?.isInitialized ? 'Aktiv' : 'Wartet auf Login'}
                         </p>
                       </div>
                       <div className="flex gap-2">
-                        {m.fullName !== 'Raphael Drago' && (
-                          <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}>
+                        {m?.fullName !== 'Raphael Drago' && (
+                          <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m?.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}>
                             <ShieldCheck size={18} />
                           </button>
                         )}
-                        {m.fullName !== 'Raphael Drago' && (
+                        {m?.fullName !== 'Raphael Drago' && (
                           <button onClick={async () => { if(confirm('Mitglied entfernen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg">
                             <Trash2 size={18} />
                           </button>
@@ -630,19 +632,19 @@ export default function App() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Bestand</label>
-                  <div className="flex gap-2 h-[52px]">
-                    <input type="number" className="flex-1 bg-black p-3 rounded-xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
-                    <select className="w-20 bg-black px-2 rounded-xl border border-gray-800 text-white text-[10px] outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})}>
-                      {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                    </select>
-                  </div>
+                  <input type="number" className="w-full h-[52px] bg-black p-4 rounded-xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Warn-Limit</label>
-                  <div className="h-[52px]">
-                    <input type="number" className="w-full h-full bg-black p-3 rounded-xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
-                  </div>
+                  <input type="number" className="w-full h-[52px] bg-black p-4 rounded-xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] text-gray-500 uppercase font-black ml-2">Einheit</label>
+                <select className="w-full h-[52px] bg-black p-4 rounded-xl border border-gray-800 text-white text-sm outline-none focus:border-orange-500 shadow-inner transition-all" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})}>
+                  {UNITS.map(u => <option key={u} value={u} className="bg-[#161616] text-white">{u}</option>)}
+                </select>
               </div>
 
               <div className="space-y-2">
@@ -664,7 +666,7 @@ export default function App() {
       {/* --- DELETE DIALOG --- */}
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl">
+          <div className="bg-[#1a1a1a] p-10 rounded-[3rem] text-center border border-red-900/20 max-w-sm shadow-2xl shadow-red-900/10">
             <div className="w-20 h-20 bg-red-950/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertTriangle size={48} /></div>
             <h3 className="text-xl font-black mb-2 italic text-white uppercase tracking-tighter leading-tight text-center leading-none">Löschen?</h3>
             <p className="text-gray-600 text-sm mb-10 leading-relaxed text-center">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> wirklich endgültig entfernen?</p>
