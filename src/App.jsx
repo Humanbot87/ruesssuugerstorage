@@ -34,7 +34,24 @@ const db = getFirestore(app);
 // appId v2 für saubere Datenstruktur
 const appId = "ruess-suuger-storage-v2";
 
-const apiKey = ""; // API Key wird automatisch injiziert
+const apiKey = ""; // API Key wird automatisch vom System injiziert
+
+// --- KI Helper Funktion mit Exponential Backoff ---
+async function callAI(url, payload) {
+  for (let i = 0; i < 5; i++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (response.ok) return await response.json();
+      if (response.status !== 429 && response.status < 500) break;
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+  }
+  throw new Error("KI Schnittstelle nicht erreichbar");
+}
 
 export default function App() {
   const [items, setItems] = useState([]);
@@ -224,11 +241,8 @@ export default function App() {
 
       const prompt = `Analysiere die Nutzungshistorie für den Gegenstand "${item.name}": [${historyStr}]. Aktuelle Mindestmenge ist ${item.minStock}. Empfiehl eine neue optimale Mindestmenge als Zahl basierend auf der Frequenz der Entnahmen. Antworte NUR mit der Zahl und einer sehr kurzen Begründung (max 1 Satz).`;
       
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      });
-      const result = await response.json();
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+      const result = await callAI(url, { contents: [{ parts: [{ text: prompt }] }] });
       const aiText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
       
       if (aiText) {
@@ -245,16 +259,12 @@ export default function App() {
 
   const generateImageWithAI = async (itemName) => {
     try {
-      const promptText = `Ein klares, freigestelltes Produktfoto von ${itemName} auf neutralem, hellem Hintergrund. Professionell ausgeleuchtet.`;
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          instances: { prompt: promptText }, 
-          parameters: { sampleCount: 1 } 
-        })
+      const promptText = `Ein klares, freigestelltes Produktfoto von ${itemName} auf neutralem, hellem Hintergrund für einen Fasnachts-Verein. Professionell ausgeleuchtet, keine Texte im Bild.`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+      const result = await callAI(url, { 
+        instances: { prompt: promptText }, 
+        parameters: { sampleCount: 1 } 
       });
-      const result = await response.json();
       if (result.predictions?.[0]?.bytesBase64Encoded) {
         return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
       }
@@ -268,13 +278,10 @@ export default function App() {
     setIsAnalyzing(true);
     const pureBase64 = base64Data.split(',')[1];
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: "Was ist das? Antworte nur mit dem Namen (max 3 Wörter)." }, { inlineData: { mimeType: "image/jpeg", data: pureBase64 } }] }]
-        })
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+      const result = await callAI(url, {
+        contents: [{ parts: [{ text: "Was ist das? Antworte nur mit dem Namen des Gegenstands (max 3 Wörter)." }, { inlineData: { mimeType: "image/jpeg", data: pureBase64 } }] }]
       });
-      const result = await response.json();
       const aiName = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
       if (aiName) setNewItem(prev => ({ ...prev, name: aiName }));
     } catch (e) { console.error("AI Error", e); }
@@ -492,7 +499,7 @@ export default function App() {
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in fade-in duration-300">
           <div className="bg-[#161616] w-full max-w-2xl rounded-[2.5rem] border border-orange-500/10 shadow-2xl flex flex-col max-h-[90vh]">
             <div className="p-8 border-b border-gray-800 flex justify-between items-center"><div className="flex items-center gap-3"><ShieldCheck className="text-orange-500" size={24} /><div><h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight text-white">Admin Control</h2><p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Vereins-Stammdaten</p></div></div><button onClick={() => setIsAdminPanelOpen(false)} className="bg-gray-800 p-3 rounded-2xl hover:bg-gray-700"><X size={20}/></button></div>
-            <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar"><button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl"><FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)</button><div className="space-y-4 pt-4 border-t border-gray-800"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3><form onSubmit={async (e) => { e.preventDefault(); const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName, role: 'member', isInitialized: false }); setNewMemberName({ first: '', last: '' }); }} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} /><input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} /><button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button></form></div><div className="space-y-4 pb-4"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3><div className="grid gap-2">{members.map(m => (<div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all"><div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div><div className="flex gap-2">{m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}{m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Löschen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}</div></div>))}</div></div></div>
+            <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar"><button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl"><FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)</button><div className="space-y-4 pt-4 border-t border-gray-800"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3><form onSubmit={async (e) => { e.preventDefault(); const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName, role: 'member', isInitialized: false }); setNewMemberName({ first: '', last: '' }); }} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} /><input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} /><button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button></form></div><div className="space-y-4 pb-4"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3><div className="grid gap-2">{members.map(m => (<div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all"><div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div><div className="flex gap-2">{m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}{m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Mitglied wirklich löschen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}</div></div>))}</div></div></div>
           </div>
         </div>
       )}
