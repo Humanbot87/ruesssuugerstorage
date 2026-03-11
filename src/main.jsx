@@ -54,13 +54,14 @@ function App() {
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'));
-    return onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       setItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
     }, (err) => {
       console.error("Firestore Error", err);
       setLoading(false);
     });
+    return () => unsubscribe();
   }, [user]);
 
   const handleImageChange = (e) => {
@@ -217,5 +218,8 @@ function App() {
   );
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(<App />);
+}
