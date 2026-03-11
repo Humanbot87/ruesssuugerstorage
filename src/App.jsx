@@ -4,7 +4,7 @@ import {
   Plus, Minus, Search, Package, Trash2, PlusCircle, X, Loader2, 
   AlertCircle, LogOut, KeyRound, ShieldCheck, FileSpreadsheet, 
   Users, ChevronRight, UserPlus, ShieldAlert, ImageIcon, Camera, AlertTriangle, History,
-  ArrowRightLeft, RotateCcw, ShoppingCart, Info, Sparkles, TrendingUp
+  ArrowRightLeft, RotateCcw, ShoppingCart, Info, LayoutGrid, List
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
@@ -34,25 +34,6 @@ const db = getFirestore(app);
 // appId v2 für saubere Datenstruktur
 const appId = "ruess-suuger-storage-v2";
 
-const apiKey = ""; // API Key wird automatisch vom System injiziert
-
-// --- KI Helper Funktion mit Exponential Backoff ---
-async function callAI(url, payload) {
-  for (let i = 0; i < 5; i++) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (response.ok) return await response.json();
-      if (response.status !== 429 && response.status < 500) break;
-    } catch (e) {}
-    await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
-  }
-  throw new Error("KI Schnittstelle nicht erreichbar");
-}
-
 export default function App() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -61,8 +42,7 @@ export default function App() {
   const [userData, setUserData] = useState(null);
   const [members, setMembers] = useState([]); 
   
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiRecommendationLoading, setAiRecommendationLoading] = useState(null); 
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' oder 'list'
   const [authStep, setAuthStep] = useState('identify'); 
   const [authForm, setAuthForm] = useState({ firstName: '', lastName: '', password: '' });
   const [authError, setAuthError] = useState('');
@@ -231,63 +211,6 @@ export default function App() {
     await logMovement(item.id, type, delta === 0 ? 1 : delta);
   };
 
-  const recommendMinStockWithAI = async (item) => {
-    setAiRecommendationLoading(item.id);
-    try {
-      const historyStr = (item.history || [])
-        .slice(-10)
-        .map(h => `${h.action}: ${h.amount} Stk am ${new Date(h.timestamp).toLocaleDateString()}`)
-        .join(', ');
-
-      const prompt = `Analysiere die Nutzungshistorie für den Gegenstand "${item.name}": [${historyStr}]. Aktuelle Mindestmenge ist ${item.minStock}. Empfiehl eine neue optimale Mindestmenge als Zahl basierend auf der Frequenz der Entnahmen. Antworte NUR mit der Zahl und einer sehr kurzen Begründung (max 1 Satz).`;
-      
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-      const result = await callAI(url, { contents: [{ parts: [{ text: prompt }] }] });
-      const aiText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      
-      if (aiText) {
-          const match = aiText.match(/\d+/);
-          const suggestedNum = match ? parseInt(match[0]) : item.minStock;
-          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), {
-            aiRecommendedMin: suggestedNum,
-            aiReason: aiText
-          });
-      }
-    } catch (e) { console.error("AI Recommendation Error", e); }
-    setAiRecommendationLoading(null);
-  };
-
-  const generateImageWithAI = async (itemName) => {
-    try {
-      const promptText = `Ein klares, freigestelltes Produktfoto von ${itemName} auf neutralem, hellem Hintergrund für einen Fasnachts-Verein. Professionell ausgeleuchtet, keine Texte im Bild.`;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
-      const result = await callAI(url, { 
-        instances: { prompt: promptText }, 
-        parameters: { sampleCount: 1 } 
-      });
-      if (result.predictions?.[0]?.bytesBase64Encoded) {
-        return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
-      }
-    } catch (err) {
-      console.error("Image generation failed", err);
-    }
-    return null;
-  };
-
-  const analyzeImageWithAI = async (base64Data) => {
-    setIsAnalyzing(true);
-    const pureBase64 = base64Data.split(',')[1];
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-      const result = await callAI(url, {
-        contents: [{ parts: [{ text: "Was ist das? Antworte nur mit dem Namen des Gegenstands (max 3 Wörter)." }, { inlineData: { mimeType: "image/jpeg", data: pureBase64 } }] }]
-      });
-      const aiName = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      if (aiName) setNewItem(prev => ({ ...prev, name: aiName }));
-    } catch (e) { console.error("AI Error", e); }
-    setIsAnalyzing(false);
-  };
-
   const handleSaveItem = async (e) => {
     e.preventDefault();
     if (!user || !newItem.name) return;
@@ -298,7 +221,6 @@ export default function App() {
 
     try {
       if (existingItem) {
-        // Bestehenden Artikel aktualisieren (Addieren)
         const addedQty = parseInt(newItem.quantity);
         const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', existingItem.id);
         
@@ -315,16 +237,9 @@ export default function App() {
           })
         });
       } else {
-        // Neuen Artikel anlegen (ggf. mit KI-Bild)
-        let finalImage = newItem.image;
-        if (!finalImage) {
-          finalImage = await generateImageWithAI(trimmedName);
-        }
-
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), {
           ...newItem,
           name: trimmedName,
-          image: finalImage,
           quantity: parseInt(newItem.quantity),
           minStock: parseInt(newItem.minStock),
           borrowedQuantity: 0,
@@ -387,7 +302,7 @@ export default function App() {
              <h1 className="text-2xl font-black uppercase italic tracking-tighter text-white">
                <span className="text-gray-500">Rüss</span><span className="text-orange-500">Suuger</span>
              </h1>
-             <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2 italic">Cloud-Inventar v2</p>
+             <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2 italic">Lager-Login</p>
           </div>
           <form onSubmit={authStep === 'identify' ? handleIdentify : handleAuthAction} className="space-y-4">
             {authStep === 'identify' ? (
@@ -428,16 +343,22 @@ export default function App() {
         </div>
         <div className="flex gap-2">
           {isUserAdmin && <button onClick={() => setIsAdminPanelOpen(true)} className="p-2.5 bg-gray-800 rounded-xl text-orange-500 hover:bg-orange-500 hover:text-white transition-all shadow-lg"><Users size={20}/></button>}
-          <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 p-2.5 rounded-xl text-white shadow-lg active:scale-95 transition-all"><Plus size={20}/></button>
+          <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 p-2.5 rounded-xl text-white shadow-lg active:scale-95 transition-all"><PlusCircle size={20}/></button>
           <button onClick={() => signOut(auth)} className="bg-gray-800 p-2.5 rounded-xl text-gray-500 hover:text-red-500 transition-all"><LogOut size={20}/></button>
         </div>
       </header>
 
       <main className="p-4 max-w-5xl mx-auto">
         <div className="flex flex-col gap-4 mb-8">
-          <div className="relative">
-            <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
-            <input type="text" placeholder="Gegenstand suchen..." className="w-full bg-[#161616] p-4 pl-12 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 transition-all shadow-inner" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+                <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
+                <input type="text" placeholder="Gegenstand suchen..." className="w-full bg-[#161616] p-4 pl-12 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 transition-all shadow-inner" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            </div>
+            <div className="flex bg-[#161616] border border-gray-800 rounded-2xl p-1">
+                <button onClick={() => setViewMode('grid')} className={`p-2.5 rounded-xl transition-all ${viewMode === 'grid' ? 'bg-orange-600 text-white' : 'text-gray-600'}`}><LayoutGrid size={20}/></button>
+                <button onClick={() => setViewMode('list')} className={`p-2.5 rounded-xl transition-all ${viewMode === 'list' ? 'bg-orange-600 text-white' : 'text-gray-600'}`}><List size={20}/></button>
+            </div>
           </div>
           
           <div className="space-y-3">
@@ -457,40 +378,82 @@ export default function App() {
         {filteredItems.length === 0 ? (
             <div className="text-center py-20 bg-black/20 border-2 border-dashed border-gray-800 rounded-[3rem]"><Info size={48} className="mx-auto text-gray-800 mb-4" /><p className="text-gray-600 font-bold uppercase tracking-widest text-xs italic">Keine Einträge vorhanden</p></div>
         ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredItems.map(item => {
-                const bedarf = Math.max(0, item.minStock - item.quantity);
-                const isCritical = item.quantity <= item.minStock;
-                return (
-                <div key={item.id} className={`bg-[#161616] rounded-3xl overflow-hidden border border-gray-800 shadow-xl group hover:border-gray-700 transition-all flex flex-col ${isCritical ? 'ring-1 ring-red-500/30' : ''}`}>
-                    <div className="h-44 bg-black flex items-center justify-center relative overflow-hidden border-b border-gray-800/50">
-                        {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={item.name} /> : <ImageIcon className="text-gray-900 opacity-30" size={64} />}
-                        {isCritical && (<div className="absolute top-2 left-2 flex flex-col gap-1"><div className="bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase shadow-lg">Nachfüllen</div><div className="bg-white text-black text-[10px] font-black px-2 py-1 rounded-lg shadow-xl flex items-center gap-1"><ShoppingCart size={10} /> +{bedarf} Stk.</div></div>)}
-                        {(item.borrowedQuantity || 0) > 0 && (<div className="absolute top-2 right-2 bg-orange-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase shadow-lg border border-orange-400/30">{item.borrowedQuantity} Ausgeliehen</div>)}
-                    </div>
-                    <div className="p-5 flex-1 flex flex-col">
-                        <div className="flex justify-between items-start mb-1"><h3 className="font-bold text-lg text-white truncate pr-2 leading-tight">{item.name}</h3><button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button></div>
-                        <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest mb-4 italic">{item.location}</p>
-                        <div className="flex items-center justify-between bg-black/40 p-4 rounded-2xl border border-gray-800/50 shadow-inner">
-                            <button onClick={() => updateQty(item, -1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Minus size={18}/></button>
-                            <div className="text-center"><span className={`text-3xl font-black ${isCritical ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span><span className="block text-[8px] text-gray-600 font-bold uppercase mt-1 tracking-tighter">Bestand (Limit: {item.minStock})</span></div>
-                            <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Plus size={18}/></button>
+            <>
+            {viewMode === 'grid' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {filteredItems.map(item => {
+                        const bedarf = Math.max(0, item.minStock - item.quantity);
+                        const isCritical = item.quantity <= item.minStock;
+                        return (
+                        <div key={item.id} className={`bg-[#161616] rounded-3xl overflow-hidden border border-gray-800 shadow-xl group hover:border-gray-700 transition-all flex flex-col ${isCritical ? 'ring-1 ring-red-500/30' : ''}`}>
+                            <div className="h-44 bg-black flex items-center justify-center relative overflow-hidden border-b border-gray-800/50">
+                                {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={item.name} /> : <ImageIcon className="text-gray-900 opacity-30" size={64} />}
+                                {isCritical && (<div className="absolute top-2 left-2 flex flex-col gap-1"><div className="bg-red-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase shadow-lg">Nachfüllen</div><div className="bg-white text-black text-[10px] font-black px-2 py-1 rounded-lg shadow-xl flex items-center gap-1"><ShoppingCart size={10} /> +{bedarf} Stk.</div></div>)}
+                                {(item.borrowedQuantity || 0) > 0 && (<div className="absolute top-2 right-2 bg-orange-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase shadow-lg border border-orange-400/30">{item.borrowedQuantity} Ausgeliehen</div>)}
+                            </div>
+                            <div className="p-5 flex-1 flex flex-col">
+                                <div className="flex justify-between items-start mb-1"><h3 className="font-bold text-lg text-white truncate pr-2 leading-tight">{item.name}</h3><button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500 transition-colors"><Trash2 size={16}/></button></div>
+                                <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest mb-4 italic">{item.location}</p>
+                                <div className="flex items-center justify-between bg-black/40 p-4 rounded-2xl border border-gray-800/50 shadow-inner">
+                                    <button onClick={() => updateQty(item, -1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Minus size={18}/></button>
+                                    <div className="text-center"><span className={`text-3xl font-black ${isCritical ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span><span className="block text-[8px] text-gray-600 font-bold uppercase mt-1 tracking-tighter">Lager (Limit: {item.minStock})</span></div>
+                                    <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Plus size={18}/></button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 mt-3">
+                                    <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={item.quantity === 0} className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 border-orange-500/20 text-orange-500 bg-orange-600/10 hover:bg-orange-600/20`}>Ausleihen</button>
+                                    <button onClick={() => updateQty(item, 0, 'zurückgebracht')} disabled={(item.borrowedQuantity || 0) === 0} className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95 disabled:opacity-30">Zurück</button>
+                                </div>
+                                <div className="mt-4 pt-3 border-t border-gray-800/50">
+                                    <p className="text-[10px] text-gray-400 font-medium italic line-clamp-1 mb-2">{item.lastAction || 'Keine Bewegungen.'}</p>
+                                    <div className="flex justify-between items-center text-[7px] font-bold text-gray-700 uppercase tracking-tighter"><span>{item.updatedBy || 'N/A'}</span><span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ''}</span></div>
+                                </div>
+                            </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 mt-3">
-                            <button onClick={() => updateQty(item, 0, 'ausgeliehen')} disabled={item.quantity === 0} className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[9px] font-black uppercase border transition-all active:scale-95 disabled:opacity-30 ${item.currentStatus === 'ausgeliehen' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-orange-600/10 border-orange-500/20 text-orange-500'}`}><ArrowRightLeft size={12} /> Ausleihen</button>
-                            <button onClick={() => updateQty(item, 0, 'zurückgebracht')} disabled={(item.borrowedQuantity || 0) === 0} className="flex items-center justify-center gap-2 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 py-2 rounded-xl text-[9px] font-black uppercase text-green-500 transition-all active:scale-95 disabled:opacity-30"><RotateCcw size={12} /> Zurück</button>
-                        </div>
-                        <div className="mt-4 pt-3 border-t border-gray-800/50">
-                            <div className="flex items-center justify-between mb-1"><div className="flex items-center gap-2 text-[8px] font-black uppercase text-gray-500"><History size={10} /> Letzte Aktivität</div><button onClick={() => recommendMinStockWithAI(item)} className="text-orange-500 hover:text-white transition-colors" title="KI Mindestmengen-Empfehlung">{aiRecommendationLoading === item.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}</button></div>
-                            <p className="text-[10px] text-gray-400 font-medium italic line-clamp-1 mb-2">{item.lastAction || 'Keine Bewegungen.'}</p>
-                            {item.aiRecommendedMin && (<div className="bg-orange-600/5 border border-orange-500/10 rounded-lg p-2 mb-2 animate-in fade-in slide-in-from-top-1"><div className="flex items-center gap-1 text-orange-400 text-[8px] font-black uppercase mb-1"><TrendingUp size={10} /> KI Empfehlung</div><p className="text-[9px] text-gray-500 leading-tight">Empfohlener Minimalbestand: <span className="text-white font-bold">{item.aiRecommendedMin}</span></p><p className="text-[8px] text-gray-600 italic mt-1">{item.aiReason}</p></div>)}
-                            <div className="flex justify-between items-center text-[7px] font-bold text-gray-700 uppercase tracking-tighter"><span>Nutzer: {item.updatedBy || 'N/A'}</span><span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : ''}</span></div>
-                        </div>
-                    </div>
+                        );
+                    })}
                 </div>
-                );
-            })}
+            ) : (
+                <div className="space-y-2">
+                    {filteredItems.map(item => {
+                        const isCritical = item.quantity <= item.minStock;
+                        return (
+                            <div key={item.id} className={`bg-[#161616] p-3 rounded-2xl border border-gray-800 flex items-center gap-4 group hover:border-gray-700 transition-all ${isCritical ? 'border-red-900/30' : ''}`}>
+                                <div className="w-12 h-12 rounded-xl bg-black overflow-hidden flex-shrink-0 flex items-center justify-center">
+                                    {item.image ? <img src={item.image} className="w-full h-full object-cover" /> : <ImageIcon size={20} className="text-gray-900" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="text-sm font-bold text-white truncate">{item.name}</h3>
+                                    <div className="flex gap-2 items-center">
+                                        <span className="text-[8px] font-black uppercase text-gray-600">{item.location}</span>
+                                        {item.borrowedQuantity > 0 && <span className="text-[8px] font-black uppercase text-orange-500">{item.borrowedQuantity} Verliehen</span>}
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3 bg-black/40 px-3 py-1.5 rounded-xl border border-gray-800">
+                                    <button onClick={() => updateQty(item, -1)} className="text-gray-500 hover:text-white transition-colors"><Minus size={14}/></button>
+                                    <span className={`text-lg font-black min-w-[2ch] text-center ${isCritical ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span>
+                                    <button onClick={() => updateQty(item, 1)} className="text-gray-500 hover:text-white transition-colors"><Plus size={14}/></button>
+                                </div>
+                                <div className="flex gap-1">
+                                    <button onClick={() => updateQty(item, 0, 'ausgeliehen')} className="p-2 bg-orange-600/10 text-orange-500 rounded-lg hover:bg-orange-600/20 transition-all"><ArrowRightLeft size={16}/></button>
+                                    <button onClick={() => setItemToDelete(item)} className="p-2 text-gray-700 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+            
+            {/* Hinzufügen Button am Ende der Liste */}
+            <div className="mt-8 mb-12 flex justify-center">
+                <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-3 bg-[#161616] border border-gray-800 hover:border-orange-500/50 hover:bg-[#1a1a1a] px-8 py-5 rounded-[2rem] transition-all group shadow-2xl">
+                    <div className="bg-orange-600 p-2 rounded-xl text-white group-hover:scale-110 transition-transform"><Plus size={24}/></div>
+                    <div className="text-left">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 leading-none mb-1">Inventar erweitern</p>
+                        <p className="text-lg font-black text-white italic tracking-tighter uppercase">Neuen Artikel erfassen</p>
+                    </div>
+                </button>
             </div>
+            </>
         )}
       </main>
 
@@ -499,7 +462,7 @@ export default function App() {
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in fade-in duration-300">
           <div className="bg-[#161616] w-full max-w-2xl rounded-[2.5rem] border border-orange-500/10 shadow-2xl flex flex-col max-h-[90vh]">
             <div className="p-8 border-b border-gray-800 flex justify-between items-center"><div className="flex items-center gap-3"><ShieldCheck className="text-orange-500" size={24} /><div><h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight text-white">Admin Control</h2><p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Vereins-Stammdaten</p></div></div><button onClick={() => setIsAdminPanelOpen(false)} className="bg-gray-800 p-3 rounded-2xl hover:bg-gray-700"><X size={20}/></button></div>
-            <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar"><button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl"><FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)</button><div className="space-y-4 pt-4 border-t border-gray-800"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3><form onSubmit={async (e) => { e.preventDefault(); const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName, role: 'member', isInitialized: false }); setNewMemberName({ first: '', last: '' }); }} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} /><input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} /><button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button></form></div><div className="space-y-4 pb-4"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3><div className="grid gap-2">{members.map(m => (<div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all"><div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div><div className="flex gap-2">{m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}{m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Mitglied wirklich löschen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}</div></div>))}</div></div></div>
+            <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar"><button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl"><FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)</button><div className="space-y-4 pt-4 border-t border-gray-800"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3><form onSubmit={async (e) => { e.preventDefault(); const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName, role: 'member', isInitialized: false }); setNewMemberName({ first: '', last: '' }); }} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} /><input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} /><button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button></form></div><div className="space-y-4 pb-4"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3><div className="grid gap-2">{members.map(m => (<div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all"><div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div><div className="flex gap-2">{m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}{m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Löschen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}</div></div>))}</div></div></div>
           </div>
         </div>
       )}
@@ -512,8 +475,7 @@ export default function App() {
             <form onSubmit={handleSaveItem} className="space-y-5">
               <div onClick={() => fileInputRef.current.click()} className="h-44 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex items-center justify-center overflow-hidden cursor-pointer relative group hover:border-orange-500 transition-all shadow-inner">
                 {newItem.image ? <img src={newItem.image} className="w-full h-full object-cover" alt="Preview" /> : <div className="text-center group-hover:scale-110 transition-transform"><Camera className="mx-auto text-gray-800 mb-2" size={32}/><p className="text-[10px] font-bold uppercase text-gray-600">Foto aufnehmen</p></div>}
-                {(isAnalyzing || isSaving) && <div className="absolute inset-0 bg-black/70 flex items-center justify-center flex-col gap-2"><Loader2 className="animate-spin text-orange-500" /><p className="text-[10px] text-white font-bold uppercase tracking-widest animate-pulse italic">{isSaving && !newItem.image ? 'KI generiert Bild...' : 'Verarbeitung...'}</p></div>}
-                <input type="file" ref={fileInputRef} hidden accept="image/*" capture="environment" onChange={(e) => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (ev) => { setNewItem({...newItem, image: ev.target.result}); analyzeImageWithAI(ev.target.result); }; reader.readAsDataURL(file); }} />
+                <input type="file" ref={fileInputRef} hidden accept="image/*" capture="environment" onChange={(e) => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (ev) => { setNewItem({...newItem, image: ev.target.result}); }; reader.readAsDataURL(file); }} />
               </div>
               <div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Artikel Name</label><input required placeholder="Bezeichnung..." className="w-full bg-black p-4 rounded-2xl outline-none border border-gray-800 text-white focus:border-orange-500 shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} /></div>
               <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Initial-Bestand</label><input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} /></div><div className="space-y-2"><label className="text-[10px] text-gray-500 uppercase font-black ml-2">Warn-Menge</label><input type="number" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} /></div></div>
