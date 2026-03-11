@@ -7,8 +7,6 @@ import {
   Archive, 
   Hammer, 
   Trash2, 
-  LayoutGrid, 
-  List,
   PlusCircle,
   X,
   Loader2,
@@ -59,6 +57,7 @@ const db = getFirestore(app);
 export default function App() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null); // Neuer State für Fehlermeldungen
   const [user, setUser] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterLocation, setFilterLocation] = useState('All');
@@ -85,8 +84,9 @@ export default function App() {
         } else {
           await signInAnonymously(auth);
         }
-      } catch (error) {
-        console.error("Auth-Fehler:", error);
+      } catch (err) {
+        console.error("Auth-Fehler:", err);
+        setError("Authentifizierung fehlgeschlagen. Bitte prüfe die Firebase Console.");
       }
     };
 
@@ -100,6 +100,7 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
+    // Pfad: /artifacts/{appId}/public/data/inventory
     const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
     const q = query(inventoryRef);
 
@@ -110,8 +111,14 @@ export default function App() {
       }));
       setItems(itemsData);
       setLoading(false);
-    }, (error) => {
-      console.error("Firestore Fehler:", error);
+      setError(null);
+    }, (err) => {
+      console.error("Firestore Fehler:", err);
+      if (err.code === 'permission-denied') {
+        setError("Zugriff verweigert: Bitte prüfe deine Firebase Firestore Regeln!");
+      } else {
+        setError("Fehler beim Laden der Daten: " + err.message);
+      }
       setLoading(false);
     });
 
@@ -164,8 +171,8 @@ export default function App() {
       const inventoryRef = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
       await addDoc(inventoryRef, {
         ...newItem,
-        quantity: parseInt(newItem.quantity),
-        minStock: parseInt(newItem.minStock),
+        quantity: parseInt(newItem.quantity) || 0,
+        minStock: parseInt(newItem.minStock) || 0,
         updatedAt: new Date().toISOString()
       });
       setNewItem({ 
@@ -178,8 +185,9 @@ export default function App() {
         image: null 
       });
       setIsModalOpen(false);
-    } catch (error) {
-      console.error("Fehler beim Hinzufügen:", error);
+    } catch (err) {
+      console.error("Fehler beim Hinzufügen:", err);
+      alert("Fehler beim Speichern. Prüfe die Internetverbindung.");
     }
   };
 
@@ -188,7 +196,7 @@ export default function App() {
     const item = items.find(i => i.id === id);
     if (!item) return;
 
-    const newQuantity = Math.max(0, item.quantity + delta);
+    const newQuantity = Math.max(0, (item.quantity || 0) + delta);
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
     
     try {
@@ -196,8 +204,8 @@ export default function App() {
         quantity: newQuantity,
         updatedAt: new Date().toISOString()
       });
-    } catch (error) {
-      console.error("Fehler beim Update:", error);
+    } catch (err) {
+      console.error("Fehler beim Update:", err);
     }
   };
 
@@ -207,8 +215,8 @@ export default function App() {
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id);
     try {
       await updateDoc(itemRef, { status: newStatus });
-    } catch (error) {
-      console.error("Status-Fehler:", error);
+    } catch (err) {
+      console.error("Status-Fehler:", err);
     }
   };
 
@@ -218,8 +226,8 @@ export default function App() {
     try {
       await deleteDoc(itemRef);
       setItemToDelete(null);
-    } catch (error) {
-      console.error("Lösch-Fehler:", error);
+    } catch (err) {
+      console.error("Lösch-Fehler:", err);
     }
   };
 
@@ -232,10 +240,30 @@ export default function App() {
     }).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }, [items, searchTerm, filterLocation, filterStatus]);
 
-  if (loading) {
+  if (loading && !error) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-        <Loader2 className="w-12 h-12 text-orange-500 animate-spin" />
+      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center">
+        <Loader2 className="w-12 h-12 text-orange-500 animate-spin mb-4" />
+        <p className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Verbindung wird hergestellt...</p>
+      </div>
+    );
+  }
+
+  // Error Anzeige
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center p-8 text-center">
+        <AlertCircle className="w-16 h-16 text-red-500 mb-6" />
+        <h2 className="text-xl font-black text-white uppercase mb-4 tracking-tighter">System-Fehler</h2>
+        <div className="bg-red-900/10 border border-red-900/20 p-6 rounded-3xl max-w-sm">
+          <p className="text-red-400 text-sm leading-relaxed">{error}</p>
+        </div>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="mt-8 bg-orange-600 px-10 py-4 rounded-2xl text-white font-black uppercase tracking-widest text-xs active:scale-95 transition-all shadow-xl shadow-orange-900/20"
+        >
+          Neu laden
+        </button>
       </div>
     );
   }
@@ -245,9 +273,9 @@ export default function App() {
       <header className="border-b border-gray-800 bg-[#111] sticky top-0 z-30 shadow-2xl">
         <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
           <div className="flex items-baseline shrink-0">
-            <span className="text-2xl font-black text-gray-400">Rüss</span>
-            <span className="text-2xl font-black text-orange-500">Suuger</span>
-            <span className="text-2xl font-black text-gray-400 ml-2">Ämme</span>
+            <span className="text-2xl font-black text-gray-400 uppercase tracking-tighter">Rüss</span>
+            <span className="text-2xl font-black text-orange-500 uppercase tracking-tighter">Suuger</span>
+            <span className="text-2xl font-black text-gray-400 ml-2 uppercase tracking-tighter">Ämme</span>
           </div>
           <button onClick={() => setIsModalOpen(true)} className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-lg active:scale-95">
             <PlusCircle size={20} />
@@ -274,7 +302,7 @@ export default function App() {
         {filteredItems.length === 0 ? (
           <div className="text-center py-24 border-2 border-dashed border-gray-800 rounded-[2rem] bg-[#0d0d0d]">
             <Package className="mx-auto w-20 h-20 text-gray-800 mb-6" />
-            <h3 className="text-xl font-bold text-gray-400 italic">"Nüd gfonde"</h3>
+            <p className="text-gray-600 font-bold uppercase tracking-[0.2em] text-[10px]">"Nüd gfonde"</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -288,21 +316,25 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                <div className="p-6 flex-1">
+                <div className="p-6 flex-1 flex flex-col">
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex-1 min-w-0 pr-2">
-                      <span className={`text-[10px] uppercase tracking-widest font-black mb-1 block ${item.location === 'Bastelraum' ? 'text-blue-400' : 'text-purple-400'}`}>{item.location}</span>
+                      <span className={`text-[9px] uppercase tracking-widest font-black mb-1 block ${item.location === 'Bastelraum' ? 'text-blue-400' : 'text-purple-400'}`}>{item.location}</span>
                       <h3 className="text-lg font-bold text-white group-hover:text-orange-400 transition-colors truncate">{item.name}</h3>
                     </div>
                     <button onClick={() => setItemToDelete(item)} className="text-gray-700 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                   </div>
-                  <div className="flex items-center justify-between mt-6 bg-black/50 rounded-2xl p-4 border border-gray-800/40 shadow-inner">
+                  <div className="flex items-center justify-between mt-auto bg-black/50 rounded-2xl p-4 border border-gray-800/40 shadow-inner">
                     <button onClick={() => updateQuantity(item.id, -1)} className="w-11 h-11 rounded-xl bg-[#222] flex items-center justify-center hover:bg-gray-700 hover:text-white transition-all text-gray-400 shadow-lg"><Minus size={20} /></button>
                     <div className="text-center">
-                      <span className={`text-3xl font-black tracking-tighter ${item.quantity <= (item.minStock || 0) ? 'text-red-500' : 'text-orange-500'}`}>{item.quantity}</span>
+                      <span className={`text-3xl font-black tracking-tighter ${item.quantity <= (item.minStock || 0) ? 'text-red-500 animate-pulse' : 'text-orange-500'}`}>{item.quantity}</span>
+                      <span className="block text-[8px] text-gray-600 uppercase font-bold tracking-widest mt-0.5">Stück</span>
                     </div>
                     <button onClick={() => updateQuantity(item.id, 1)} className="w-11 h-11 rounded-xl bg-[#222] flex items-center justify-center hover:bg-gray-700 hover:text-white transition-all text-gray-400 shadow-lg"><Plus size={20} /></button>
                   </div>
+                  <button onClick={() => toggleStatus(item.id, item.status || 'Verfügbar')} className={`mt-4 w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] flex items-center justify-center gap-2 transition-all ${item.status === 'Ausgeliehen' ? 'bg-orange-600/10 text-orange-500 border border-orange-500/20 hover:bg-orange-600/20' : 'bg-gray-800/50 text-gray-500 border border-gray-700/50 hover:bg-gray-700/50 hover:text-gray-300'}`}>
+                    {item.status === 'Ausgeliehen' ? 'Verfügbar machen' : 'Ausgeliehen markieren'}
+                  </button>
                 </div>
               </div>
             ))}
@@ -310,6 +342,7 @@ export default function App() {
         )}
       </main>
 
+      {/* Modal - Neuer Artikel */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md transition-all">
           <div className="bg-[#161616] border border-gray-800 w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden">
