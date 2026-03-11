@@ -9,7 +9,7 @@ import {
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, collection, onSnapshot, addDoc, updateDoc, 
-  deleteDoc, doc, getDoc, setDoc, query, where, serverTimestamp, arrayUnion
+  deleteDoc, doc, getDoc, setDoc, query, where, serverTimestamp, arrayUnion, getDocs
 } from 'firebase/firestore';
 import { 
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
@@ -48,6 +48,7 @@ export default function App() {
   const [authStep, setAuthStep] = useState('identify'); 
   const [authForm, setAuthForm] = useState({ firstName: '', lastName: '', password: '' });
   const [authError, setAuthError] = useState('');
+  const [isAuthChecking, setIsAuthChecking] = useState(false);
   const [targetMember, setTargetMember] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -102,33 +103,47 @@ export default function App() {
   const handleIdentify = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setIsAuthChecking(true);
     const fullName = `${authForm.firstName.trim()} ${authForm.lastName.trim()}`;
     
-    // Prüfen, ob das Mitglied bereits in der Registry existiert
-    const existingMember = members.find(m => m.fullName.toLowerCase() === fullName.toLowerCase());
+    try {
+      // Direkte Abfrage der Registry, um Latenzprobleme mit dem lokalen State zu vermeiden
+      const memberQuery = query(
+        collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'),
+        where("fullName", "==", fullName)
+      );
+      const querySnapshot = await getDocs(memberQuery);
 
-    if (existingMember) {
-      setTargetMember(existingMember);
-      if (existingMember.isInitialized) {
-        setAuthStep('login'); // Normaler Login, da Passwort bereits gesetzt wurde
+      if (!querySnapshot.empty) {
+        const memberData = { id: querySnapshot.docs[0].id, ...querySnapshot.docs[0].data() };
+        setTargetMember(memberData);
+        if (memberData.isInitialized) {
+          setAuthStep('login'); 
+        } else {
+          setAuthStep('setup_password');
+        }
       } else {
-        setAuthStep('setup_password'); // Erst-Login zum Passwort setzen
+        // Falls Raphael Drago noch gar nicht in der DB ist
+        const isMainAdmin = fullName.toLowerCase() === 'raphael drago';
+        if (isMainAdmin) {
+          setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
+          setAuthStep('setup_password');
+        } else {
+          setAuthError("Name nicht auf der Liste. Raphael Drago muss dich zuerst erfassen.");
+        }
       }
-    } else {
-      // Sonderfall für Raphael Drago, falls er noch gar nicht in der Registry steht
-      const isMainAdmin = fullName.toLowerCase() === 'raphael drago';
-      if (isMainAdmin) {
-        setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
-        setAuthStep('setup_password');
-      } else {
-        setAuthError("Name nicht auf der Liste. Raphael Drago muss dich zuerst erfassen.");
-      }
+    } catch (err) {
+      console.error("Identify Error:", err);
+      setAuthError("Verbindung zum Server fehlgeschlagen.");
+    } finally {
+      setIsAuthChecking(false);
     }
   };
 
   const handleAuthAction = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setIsAuthChecking(true);
     const email = getInternalEmail(targetMember.fullName);
     try {
       if (authStep === 'setup_password') {
@@ -145,7 +160,16 @@ export default function App() {
         await signInWithEmailAndPassword(auth, email, authForm.password);
       }
     } catch (err) {
-      setAuthError("Passwort falsch oder technischer Fehler.");
+      if (err.code === 'auth/wrong-password') {
+        setAuthError("Passwort ist nicht korrekt.");
+      } else if (err.code === 'auth/email-already-in-use') {
+        setAuthError("Dieses Konto wurde bereits aktiviert. Bitte logge dich normal ein.");
+        setAuthStep('login');
+      } else {
+        setAuthError("Fehler bei der Anmeldung: " + err.message);
+      }
+    } finally {
+      setIsAuthChecking(false);
     }
   };
 
@@ -298,7 +322,9 @@ export default function App() {
               </div>
             )}
             {authError && <div className="flex items-center gap-2 text-red-500 text-[10px] font-bold bg-red-500/10 p-3 rounded-xl border border-red-500/20"><AlertCircle size={14} /><p>{authError}</p></div>}
-            <button type="submit" className="w-full bg-orange-600 p-4 rounded-2xl font-black uppercase text-white shadow-lg active:scale-95 transition-all">{authStep === 'identify' ? 'Weiter' : (authStep === 'setup_password' ? 'Konto aktivieren' : 'Anmelden')}</button>
+            <button type="submit" disabled={isAuthChecking} className="w-full bg-orange-600 p-4 rounded-2xl font-black uppercase text-white shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
+                {isAuthChecking ? <Loader2 className="animate-spin" size={18} /> : (authStep === 'identify' ? 'Weiter' : (authStep === 'setup_password' ? 'Konto aktivieren' : 'Anmelden'))}
+            </button>
             {authStep !== 'identify' && <button type="button" onClick={() => {setAuthStep('identify'); setAuthError('');}} className="w-full text-gray-600 text-[10px] font-bold uppercase hover:text-white transition-colors mt-2">Abbrechen</button>}
           </form>
         </div>
