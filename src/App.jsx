@@ -106,7 +106,7 @@ export default function App() {
       }
 
       if (!memberSnap.exists()) {
-        setAuthError("Name nicht in den Stammdaten gefunden. Bitte Admin kontaktieren.");
+        setAuthError("Dieser Name wurde noch nicht vom Admin freigeschaltet.");
         return;
       }
 
@@ -117,7 +117,7 @@ export default function App() {
         setAuthStep('setup_password');
       }
     } catch (err) {
-      setAuthError("Verbindungsfehler. Bitte Firebase-Regeln prüfen.");
+      setAuthError("Verbindungsfehler. Bitte prüfe die Firebase-Regeln.");
     }
   };
 
@@ -138,24 +138,26 @@ export default function App() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, authForm.password);
       const u = userCredential.user;
       
-      // Bestimme Rolle (Admin Suuger bekommt immer admin)
       const role = (fn.toLowerCase() === 'admin' && ln.toLowerCase() === 'suuger') ? 'admin' : 'member';
 
-      // Profil speichern
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), {
         firstName: fn,
         lastName: ln,
         role: role
       });
 
-      // Registry aktualisieren
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', memberId), {
         hasPassword: true,
         uid: u.uid
       });
 
     } catch (err) {
-      setAuthError("Fehler beim Erstellen des Logins. (Eventuell existiert der Name bereits)");
+      if (err.code === 'auth/email-already-in-use') {
+        setAuthError("Ein Account für diesen Namen existiert bereits. Bitte logge dich normal ein.");
+        setAuthStep('login');
+      } else {
+        setAuthError("Fehler beim Erstellen: " + err.message);
+      }
     }
   };
 
@@ -170,7 +172,6 @@ export default function App() {
     }
   };
 
-  // --- Admin: Mitglieder hinzufügen ---
   const handleAddMemberToRegistry = async (e) => {
     e.preventDefault();
     const fn = e.target.fn.value.trim();
@@ -189,7 +190,7 @@ export default function App() {
       });
       e.target.reset();
     } catch (err) {
-      alert("Fehler beim Hinzufügen der Stammdaten.");
+      alert("Fehler beim Hinzufügen.");
     }
   };
 
@@ -211,7 +212,6 @@ export default function App() {
     return () => { invUnsub(); memUnsub(); };
   }, [user, userData]);
 
-  // --- Inventar Funktionen ---
   const toggleItemStatus = async (item) => {
     const newStatus = item.status === 'Ausgeliehen' ? 'Verfügbar' : 'Ausgeliehen';
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), {
@@ -256,7 +256,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center">
         <Loader2 className="animate-spin text-orange-500 w-12 h-12 mb-4" />
-        <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest animate-pulse">RüssSuuger Cloud wird geladen...</p>
+        <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest animate-pulse">Lager wird geladen...</p>
       </div>
     );
   }
@@ -279,13 +279,13 @@ export default function App() {
                 <input 
                   disabled={authStep !== 'identify'}
                   required type="text" placeholder="Vorname" 
-                  className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white placeholder:text-gray-700 outline-none focus:border-orange-500/50 disabled:opacity-50"
+                  className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white placeholder:text-gray-800 outline-none focus:border-orange-500/50 disabled:opacity-50"
                   value={authForm.firstName} onChange={e => setAuthForm({...authForm, firstName: e.target.value})}
                 />
                 <input 
                   disabled={authStep !== 'identify'}
                   required type="text" placeholder="Nachname" 
-                  className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white placeholder:text-gray-700 outline-none focus:border-orange-500/50 disabled:opacity-50"
+                  className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white placeholder:text-gray-800 outline-none focus:border-orange-500/50 disabled:opacity-50"
                   value={authForm.lastName} onChange={e => setAuthForm({...authForm, lastName: e.target.value})}
                 />
               </div>
@@ -293,7 +293,7 @@ export default function App() {
               {authStep !== 'identify' && (
                 <div className="space-y-2 animate-in slide-in-from-top-4">
                   <p className="text-orange-500 text-[10px] font-black uppercase tracking-widest ml-2 flex items-center gap-2">
-                    <Key size={12} /> {authStep === 'setup_password' ? 'Wähle ein Passwort (min. 6 Zeichen)' : 'Passwort eingeben'}
+                    <Key size={12} /> {authStep === 'setup_password' ? 'Erste Anmeldung: Wähle ein Passwort' : 'Passwort eingeben'}
                   </p>
                   <input required autoFocus type="password" placeholder="Passwort" className="w-full bg-black border border-orange-900/30 rounded-2xl p-4 text-white outline-none focus:border-orange-500" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
                 </div>
@@ -302,7 +302,7 @@ export default function App() {
               {authError && <div className="bg-red-950/20 border border-red-900/30 p-4 rounded-xl text-red-500 text-[10px] font-bold text-center">{authError}</div>}
 
               <button type="submit" className="w-full bg-orange-600 hover:bg-orange-500 p-5 rounded-3xl text-white font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all">
-                {authStep === 'identify' ? 'Identifizieren' : (authStep === 'setup_password' ? 'Account erstellen' : 'Anmelden')}
+                {authStep === 'identify' ? 'Prüfen' : 'Bestätigen & Starten'}
               </button>
 
               {authStep !== 'identify' && (
@@ -327,7 +327,7 @@ export default function App() {
           {userData?.role === 'admin' && (
             <button 
               onClick={() => setActiveTab(activeTab === 'inventory' ? 'admin' : 'inventory')}
-              className={`p-2.5 rounded-2xl transition-all ${activeTab === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400'}`}
+              className={`p-2.5 rounded-2xl transition-all ${activeTab === 'admin' ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/40' : 'bg-gray-800 text-gray-400'}`}
             >
               {activeTab === 'admin' ? <Package size={24} /> : <Settings size={24} />}
             </button>
@@ -346,16 +346,18 @@ export default function App() {
           <div className="space-y-8 animate-in fade-in duration-500">
             <div className="bg-[#161616] border border-gray-800 p-8 rounded-[2.5rem] shadow-xl">
               <h2 className="text-xl font-black uppercase italic text-white mb-6 flex items-center gap-3">
-                <ShieldCheck className="text-orange-500" /> Stammdaten & Mitglieder
+                <ShieldCheck className="text-orange-500" /> Mitglieder-Stammdaten
               </h2>
               <form onSubmit={handleAddMemberToRegistry} className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <input name="fn" required type="text" placeholder="Vorname" className="bg-black border border-gray-800 p-4 rounded-2xl text-white outline-none focus:border-orange-500" />
                 <input name="ln" required type="text" placeholder="Nachname" className="bg-black border border-gray-800 p-4 rounded-2xl text-white outline-none focus:border-orange-500" />
-                <select name="role" className="bg-black border border-gray-800 p-4 rounded-2xl text-white outline-none focus:border-orange-500 appearance-none">
-                  <option value="member">Mitglied</option>
-                  <option value="admin">Admin</option>
-                </select>
-                <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-orange-500 transition-all">Hinzufügen</button>
+                <div className="relative">
+                  <select name="role" className="w-full bg-black border border-gray-800 p-4 rounded-2xl text-white outline-none focus:border-orange-500 appearance-none">
+                    <option value="member">Mitglied</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-orange-500 transition-all shadow-lg">Hinzufügen</button>
               </form>
             </div>
             
@@ -372,8 +374,8 @@ export default function App() {
                     </div>
                   </div>
                   {m.id !== 'admin_suuger' && (
-                    <button onClick={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id))} className="text-gray-800 group-hover:text-red-500 transition-colors p-2">
-                      <Trash2 size={18} />
+                    <button onClick={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id))} className="text-gray-800 group-hover:text-red-500 transition-colors p-3 bg-gray-900/50 rounded-2xl">
+                      <Trash2 size={20} />
                     </button>
                   )}
                 </div>
@@ -399,7 +401,15 @@ export default function App() {
                 <div key={item.id} className="bg-[#161616] border border-gray-800 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col group hover:border-orange-500/30 transition-all duration-500">
                   <div className="h-48 bg-black relative flex items-center justify-center border-b border-gray-800/50 overflow-hidden">
                     {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" /> : <ImageIcon className="text-gray-900" size={64} />}
-                    <button onClick={() => setItemToDelete(item)} className="absolute top-4 right-4 p-3 bg-black/60 backdrop-blur-md rounded-2xl text-gray-400 hover:text-red-500 transition-all active:scale-90"><Trash2 size={20} /></button>
+                    
+                    {/* Mobile optimierter Löschbutton oben rechts */}
+                    <button 
+                      onClick={() => setItemToDelete(item)} 
+                      className="absolute top-4 right-4 p-4 bg-black/60 backdrop-blur-md rounded-2xl text-gray-400 hover:text-red-500 transition-all active:scale-90"
+                    >
+                      <Trash2 size={24} />
+                    </button>
+
                     {item.status === 'Ausgeliehen' && (
                       <div className="absolute inset-0 bg-orange-950/40 backdrop-blur-[2px] flex flex-col items-center justify-center pointer-events-none">
                         <div className="bg-orange-600 text-white text-[9px] font-black uppercase tracking-[0.2em] px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 mb-2"><Clock size={12} /> Ausgeliehen</div>
@@ -419,7 +429,7 @@ export default function App() {
                       </div>
                       <button onClick={() => updateQty(item.id, 1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 text-gray-400 active:scale-90"><Plus size={18}/></button>
                     </div>
-                    <button onClick={() => toggleItemStatus(item)} className={`w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 ${item.status === 'Ausgeliehen' ? 'bg-green-600/10 text-green-500 border border-green-500/20' : 'bg-orange-600/10 text-orange-500 border border-orange-500/20'}`}>
+                    <button onClick={() => toggleItemStatus(item)} className={`w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 ${item.status === 'Ausgeliehen' ? 'bg-green-600/10 text-green-500 border border-green-500/20 shadow-green-900/10' : 'bg-orange-600/10 text-orange-500 border border-orange-500/20 shadow-orange-900/10'}`}>
                       {item.status === 'Ausgeliehen' ? <><CheckCircle2 size={14} /> Einlagern</> : <><Clock size={14} /> Ausleihen</>}
                     </button>
                   </div>
@@ -430,6 +440,7 @@ export default function App() {
         )}
       </main>
 
+      {/* Modal - Neuer Artikel */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-md">
           <div className="bg-[#161616] w-full max-w-md rounded-[3rem] p-8 border border-gray-800 shadow-2xl overflow-y-auto max-h-[90vh]">
@@ -481,13 +492,13 @@ export default function App() {
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-xl">
           <div className="bg-[#1a1a1a] p-10 rounded-[3.5rem] text-center border border-red-900/20 max-w-sm shadow-2xl animate-in zoom-in duration-300">
             <div className="w-20 h-20 bg-red-950/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6"><AlertTriangle size={40} /></div>
-            <h3 className="text-xl font-black mb-4 italic text-white uppercase tracking-tighter">Endgültig löschen?</h3>
+            <h3 className="text-xl font-black mb-4 italic text-white uppercase tracking-tighter">Wirklich löschen?</h3>
             <p className="text-gray-500 text-sm mb-10 leading-relaxed px-2">Möchtest du <span className="text-white font-bold italic">"{itemToDelete.name}"</span> entfernen?</p>
             <div className="grid grid-cols-1 gap-4">
               <button onClick={async () => {
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id));
                 setItemToDelete(null);
-              }} className="w-full bg-red-600 py-5 rounded-3xl font-black uppercase text-xs tracking-widest text-white shadow-lg">Löschen</button>
+              }} className="w-full bg-red-600 py-5 rounded-3xl font-black uppercase text-xs tracking-widest text-white shadow-lg active:scale-95">Löschen</button>
               <button onClick={() => setItemToDelete(null)} className="w-full bg-gray-800 py-5 rounded-3xl font-black uppercase text-xs tracking-widest text-gray-400">Abbrechen</button>
             </div>
           </div>
