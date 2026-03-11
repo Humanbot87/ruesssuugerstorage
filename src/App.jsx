@@ -4,7 +4,7 @@ import {
   Plus, Minus, Search, Package, Archive, Hammer, Trash2, 
   PlusCircle, X, Loader2, AlertCircle, User, CheckCircle2, 
   Clock, Camera, Image as ImageIcon, AlertTriangle, LogOut, Key, Settings, ShieldCheck, UserCheck,
-  ArrowLeft, Download, FileSpreadsheet
+  ArrowLeft, Download, FileSpreadsheet, Hash
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
@@ -27,38 +27,45 @@ const firebaseConfig = {
   appId: "1:268045537391:web:3b30913efcf97ee6fe3d9a"
 };
 
-// Initialisierung
+// Initialisierung (Vermeidung von Doppel-Initialisierung)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = "ruess-suuger-storage-v1";
 
 export default function App() {
+  // --- States ---
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [userData, setUserData] = useState(null);
   const [members, setMembers] = useState([]); 
   
+  // Authentifizierungs-Schritte
   const [authStep, setAuthStep] = useState('identify'); // identify, setup_password, login
   const [authForm, setAuthForm] = useState({ firstName: '', lastName: '', password: '' });
   const [authError, setAuthError] = useState('');
 
-  const [activeTab, setActiveTab] = useState('inventory'); 
+  // UI-Ansichts-States
+  const [activeTab, setActiveTab] = useState('inventory'); // inventory, admin
   const [searchTerm, setSearchTerm] = useState('');
   const [filterLocation, setFilterLocation] = useState('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null); 
+  const [itemToBorrow, setItemToBorrow] = useState(null); 
+  const [borrowAmount, setBorrowAmount] = useState(1);
   const fileInputRef = useRef(null);
 
+  // State für neuen Artikel
   const [newItem, setNewItem] = useState({
     name: '', quantity: 1, location: 'Bastelraum', minStock: 0, status: 'Verfügbar', image: null
   });
 
-  // --- Auth & User Profil laden ---
+  // --- Authentifizierungs-Listener & Benutzerprofil ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (u) {
+        // Lade Benutzerrolle und Details
         const userDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid));
         if (userDoc.exists()) {
           setUserData(userDoc.data());
@@ -76,6 +83,7 @@ export default function App() {
 
   const getInternalEmail = (fn, ln) => `${fn.toLowerCase().trim()}.${ln.toLowerCase().trim()}@rs.storage`;
 
+  // Identifikation über Vor- und Nachname
   const handleIdentify = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -89,7 +97,7 @@ export default function App() {
       const memberRef = doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', memberId);
       let memberSnap = await getDoc(memberRef);
 
-      // SONDERLOGIK: Raphael Drago als Admin initialisieren
+      // Raphael Drago als System-Admin initialisieren
       if (!memberSnap.exists() && fn.toLowerCase() === 'raphael' && ln.toLowerCase() === 'drago') {
         await setDoc(memberRef, {
           firstName: "Raphael", lastName: "Drago",
@@ -99,14 +107,14 @@ export default function App() {
       }
 
       if (!memberSnap.exists()) {
-        setAuthError("Name nicht in den Stammdaten gefunden. Ein Admin muss dich erst hinzufügen.");
+        setAuthError("Name nicht gefunden. Ein Admin muss dich erst hinzufügen.");
         return;
       }
 
       const data = memberSnap.data();
       setAuthStep(data.hasPassword ? 'login' : 'setup_password');
     } catch (err) {
-      setAuthError("Verbindungsproblem. Bitte 'E-Mail/Passwort' in Firebase aktivieren.");
+      setAuthError("Verbindungsproblem. Bitte prüfe deine Internetverbindung.");
     }
   };
 
@@ -120,6 +128,7 @@ export default function App() {
 
     try {
       if (authStep === 'setup_password') {
+        // Erstmalige Passwort-Wahl
         const userCredential = await createUserWithEmailAndPassword(auth, email, authForm.password);
         const u = userCredential.user;
         
@@ -133,18 +142,19 @@ export default function App() {
           hasPassword: true, uid: u.uid, role: role
         });
       } else {
+        // Regulärer Login
         await signInWithEmailAndPassword(auth, email, authForm.password);
       }
     } catch (err) {
       if (err.code === 'auth/operation-not-allowed') {
-        setAuthError("Fehler: 'E-Mail/Passwort' muss in der Firebase Console aktiviert werden!");
+        setAuthError("Auth-Fehler: 'E-Mail/Passwort' muss in Firebase aktiviert werden!");
       } else {
-        setAuthError(authStep === 'login' ? "Passwort falsch." : "Fehler bei der Registrierung.");
+        setAuthError(authStep === 'login' ? "Passwort falsch." : "Registrierung fehlgeschlagen.");
       }
     }
   };
 
-  // --- Admin: Stammdaten verwalten ---
+  // --- Admin-Funktionen ---
   const handleAddMember = async (e) => {
     e.preventDefault();
     const fn = e.target.fn.value.trim();
@@ -158,15 +168,16 @@ export default function App() {
         firstName: fn, lastName: ln, hasPassword: false, addedAt: new Date().toISOString(), role: role
       });
       e.target.reset();
-    } catch (err) { alert("Fehler: " + err.message); }
+    } catch (err) { alert("Fehler beim Hinzufügen."); }
   };
 
-  // --- Excel Export Logik ---
+  // Excel Export Funktion (CSV mit Semikolon für Excel-Kompatibilität)
   const exportToExcel = () => {
-    const headers = ["Name", "Anzahl", "Lagerort", "Warnlimit", "Status", "Letzte Änderung von", "Datum"];
+    const headers = ["Name", "Gesamtbestand", "Ausgeliehen", "Lagerort", "Warnlimit", "Status", "Bearbeiter", "Datum"];
     const rows = items.map(item => [
       item.name,
       item.quantity,
+      item.borrowedCount || 0,
       item.location,
       item.minStock,
       item.status,
@@ -174,7 +185,6 @@ export default function App() {
       item.updatedAt ? new Date(item.updatedAt).toLocaleDateString('de-CH') : ""
     ]);
 
-    // CSV Format mit Semikolon (für deutsches Excel)
     let csvContent = "data:text/csv;charset=utf-8," 
       + headers.join(";") + "\n" 
       + rows.map(e => e.join(";")).join("\n");
@@ -188,34 +198,58 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // --- Daten laden ---
+  // --- Daten-Synchronisation (Firestore) ---
   useEffect(() => {
     if (!user) return;
+    
+    // Inventarliste laden
     const invUnsub = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), (snap) => {
       setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+
+    // Mitgliederliste (nur für Admins)
     let memUnsub = () => {};
     if (userData?.role === 'admin') {
       memUnsub = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), (snap) => {
         setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       });
     }
+
     return () => { invUnsub(); memUnsub(); };
   }, [user, userData]);
 
-  // --- Inventar Logik ---
-  const toggleStatus = async (item) => {
+  // --- Inventar-Operationen ---
+  const handleBorrowConfirm = async (e) => {
+    e.preventDefault();
+    if (!itemToBorrow || !user) return;
+
     try {
-      const next = item.status === 'Ausgeliehen' ? 'Verfügbar' : 'Ausgeliehen';
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToBorrow.id), {
+        status: 'Ausgeliehen',
+        borrowedCount: parseInt(borrowAmount),
+        lastActionBy: `${userData?.firstName} ${userData?.lastName}`,
+        lastActionAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      setItemToBorrow(null);
+      setBorrowAmount(1);
+    } catch (err) {
+      console.error(err);
+      alert("Fehler beim Ausleihen.");
+    }
+  };
+
+  const handleReturn = async (item) => {
+    try {
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), {
-        status: next,
+        status: 'Verfügbar',
+        borrowedCount: 0,
         lastActionBy: `${userData?.firstName} ${userData?.lastName}`,
         lastActionAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
     } catch (err) {
-      console.error("Fehler beim Status-Update:", err);
-      alert("Fehler beim Ändern des Status. Bitte erneut versuchen.");
+      console.error(err);
     }
   };
 
@@ -240,6 +274,7 @@ export default function App() {
         ...newItem,
         quantity: parseInt(newItem.quantity) || 0,
         minStock: parseInt(newItem.minStock) || 0,
+        borrowedCount: 0,
         status: 'Verfügbar',
         updatedAt: new Date().toISOString(),
         createdBy: userData?.firstName
@@ -247,6 +282,28 @@ export default function App() {
       setNewItem({ name: '', quantity: 1, location: 'Bastelraum', minStock: 0, status: 'Verfügbar', image: null });
       setIsModalOpen(false);
     } catch (err) { console.error(err); }
+  };
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX = 400;
+        let w = img.width, h = img.height;
+        if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } }
+        else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        setNewItem(prev => ({ ...prev, image: canvas.toDataURL('image/jpeg', 0.6) }));
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
   };
 
   const filtered = useMemo(() => {
@@ -266,7 +323,7 @@ export default function App() {
     );
   }
 
-  // --- Auth View ---
+  // --- Auth View (Login / Setup) ---
   if (!user) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-6">
@@ -320,7 +377,7 @@ export default function App() {
     );
   }
 
-  // --- Dashboard ---
+  // --- Haupt-Dashboard ---
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans selection:bg-orange-500/30">
       <header className="border-b border-gray-800 bg-[#111]/95 backdrop-blur-md sticky top-0 z-30 p-4 flex justify-between items-center shadow-xl">
@@ -421,6 +478,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {/* Prominente Karte für neuen Artikel */}
               <button 
                 onClick={() => setIsModalOpen(true)}
                 className="bg-[#161616]/50 border-2 border-dashed border-gray-800 rounded-[2.5rem] p-8 flex flex-col items-center justify-center gap-4 hover:border-orange-500/50 hover:bg-orange-500/5 transition-all group min-h-[300px]"
@@ -435,7 +493,7 @@ export default function App() {
               </button>
 
               {filtered.map(item => (
-                <div key={item.id} className={`bg-[#161616] border border-gray-800 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col group hover:border-orange-500/30 transition-all duration-500 ${item.status === 'Ausgeliehen' ? 'opacity-90' : ''}`}>
+                <div key={item.id} className={`bg-[#161616] border border-gray-800 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col group hover:border-orange-500/30 transition-all duration-500 ${item.status === 'Ausgeliehen' ? 'border-orange-500/20' : ''}`}>
                   <div className="h-48 bg-black relative flex items-center justify-center border-b border-gray-800/50 overflow-hidden">
                     {item.image ? <img src={item.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={item.name} /> : <ImageIcon className="text-gray-900" size={64} />}
                     
@@ -448,7 +506,9 @@ export default function App() {
 
                     {item.status === 'Ausgeliehen' && (
                       <div className="absolute inset-0 bg-orange-950/40 backdrop-blur-[2px] flex flex-col items-center justify-center pointer-events-none text-center p-4">
-                        <div className="bg-orange-600 text-white text-[9px] font-black uppercase tracking-[0.2em] px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 mb-1"><Clock size={12} /> Ausgeliehen</div>
+                        <div className="bg-orange-600 text-white text-[9px] font-black uppercase tracking-[0.2em] px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 mb-1">
+                          <Clock size={12} /> {item.borrowedCount || 1} Stück weg
+                        </div>
                         <p className="text-[8px] text-white font-bold uppercase tracking-widest bg-black/40 px-2 py-0.5 rounded mt-1">{item.lastActionBy}</p>
                       </div>
                     )}
@@ -462,12 +522,20 @@ export default function App() {
                       <button onClick={() => updateQty(item.id, -1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 text-gray-400 active:scale-90"><Minus size={18}/></button>
                       <div className="text-center">
                         <span className={`text-3xl font-black tracking-tighter ${item.quantity <= (item.minStock || 0) ? 'text-red-500 animate-pulse' : 'text-orange-500'}`}>{item.quantity}</span>
+                        <p className="text-[7px] uppercase font-black text-gray-600 tracking-tighter">Gesamt</p>
                       </div>
                       <button onClick={() => updateQty(item.id, 1)} className="p-3 bg-gray-800 rounded-2xl hover:bg-gray-700 text-gray-400 active:scale-90"><Plus size={18}/></button>
                     </div>
-                    <button onClick={() => toggleStatus(item)} className={`w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 ${item.status === 'Ausgeliehen' ? 'bg-green-600/10 text-green-500 border border-green-500/20' : 'bg-orange-600/10 text-orange-500 border border-orange-500/20'}`}>
-                      {item.status === 'Ausgeliehen' ? <><CheckCircle2 size={14} /> Zurückgeben</> : <><Clock size={14} /> Ausleihen</>}
-                    </button>
+                    
+                    {item.status === 'Ausgeliehen' ? (
+                      <button onClick={() => handleReturn(item)} className="w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 bg-green-600/10 text-green-500 border border-green-500/20 hover:bg-green-600/20 shadow-lg active:scale-95">
+                        <CheckCircle2 size={14} /> Alle zurückgeben
+                      </button>
+                    ) : (
+                      <button onClick={() => { setItemToBorrow(item); setBorrowAmount(1); }} className="w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center justify-center gap-2 bg-orange-600/10 text-orange-500 border border-orange-500/20 hover:bg-orange-600/20 shadow-lg active:scale-95">
+                        <Clock size={14} /> Ausleihen
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -475,6 +543,46 @@ export default function App() {
           </>
         )}
       </main>
+
+      {/* Modal - Ausleihen (Stückzahl angeben) */}
+      {itemToBorrow && (
+        <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-md">
+          <div className="bg-[#161616] w-full max-w-sm rounded-[3rem] p-8 border border-gray-800 shadow-2xl animate-in zoom-in duration-300">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-orange-600/10 rounded-full flex items-center justify-center text-orange-500 mx-auto mb-4">
+                <Clock size={32} />
+              </div>
+              <h2 className="text-xl font-black italic text-white uppercase tracking-tighter mb-1">Artikel ausleihen</h2>
+              <p className="text-gray-500 text-xs font-bold uppercase tracking-widest">{itemToBorrow.name}</p>
+            </div>
+            
+            <form onSubmit={handleBorrowConfirm} className="space-y-6">
+              <div className="bg-black border border-gray-800 rounded-3xl p-6 flex flex-col items-center">
+                <label className="text-[10px] font-black uppercase text-gray-500 tracking-[0.2em] mb-4">Stückzahl</label>
+                <div className="flex items-center gap-6">
+                  <button type="button" onClick={() => setBorrowAmount(Math.max(1, borrowAmount - 1))} className="p-3 bg-gray-900 rounded-2xl text-gray-500 hover:text-white transition-colors">
+                    <Minus size={24} />
+                  </button>
+                  <span className="text-5xl font-black text-orange-500 tracking-tighter w-16 text-center">{borrowAmount}</span>
+                  <button type="button" onClick={() => setBorrowAmount(Math.min(itemToBorrow.quantity, borrowAmount + 1))} className="p-3 bg-gray-900 rounded-2xl text-gray-500 hover:text-white transition-colors">
+                    <Plus size={24} />
+                  </button>
+                </div>
+                <p className="text-[9px] text-gray-600 font-bold uppercase mt-4">Verfügbar: {itemToBorrow.quantity} Stück</p>
+              </div>
+
+              <div className="flex flex-col gap-3 pt-2">
+                <button type="submit" className="w-full bg-orange-600 p-5 rounded-3xl font-black text-white uppercase tracking-[0.2em] shadow-xl shadow-orange-900/30 active:scale-95 transition-all italic">
+                  Bestätigen
+                </button>
+                <button type="button" onClick={() => setItemToBorrow(null)} className="w-full text-gray-600 text-[10px] font-black uppercase tracking-widest py-2">
+                  Abbrechen
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal - Neuer Artikel */}
       {isModalOpen && (
@@ -509,10 +617,10 @@ export default function App() {
                   reader.readAsDataURL(file);
                 }} />
               </div>
-              <input required type="text" placeholder="Bezeichnung" className="w-full bg-black p-5 rounded-2xl outline-none border border-gray-800 focus:border-orange-500 text-white" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+              <input required type="text" placeholder="Bezeichnung" className="w-full bg-black p-5 rounded-2xl outline-none border border-gray-800 focus:border-orange-500 text-white transition-all shadow-inner" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
               <div className="grid grid-cols-2 gap-4">
-                <input type="number" placeholder="Menge" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
-                <input type="number" placeholder="Warn-Limit" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                <input type="number" placeholder="Menge" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
+                <input type="number" placeholder="Warn-Limit" className="w-full bg-black p-4 rounded-2xl border border-gray-800 text-white outline-none focus:border-orange-500" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white shadow-lg' : 'bg-black text-gray-700 border border-gray-800'}`}>Bastelraum</button>
@@ -524,6 +632,7 @@ export default function App() {
         </div>
       )}
 
+      {/* Modal - Löschen */}
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 backdrop-blur-xl">
           <div className="bg-[#1a1a1a] p-10 rounded-[3.5rem] text-center border border-red-900/20 max-w-sm shadow-2xl animate-in zoom-in duration-300">
