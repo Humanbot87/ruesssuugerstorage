@@ -349,7 +349,7 @@ export default function App() {
       </header>
 
       <main className="p-4 max-w-5xl mx-auto">
-        <div className="flex flex-col gap-4 mb-8">
+        <div className="flex flex-col gap-4 mb-6">
           <div className="flex gap-2">
             <div className="relative flex-1">
                 <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
@@ -373,6 +373,17 @@ export default function App() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Hinzufügen Button oberhalb der Artikel */}
+        <div className="mb-8 flex justify-center">
+            <button onClick={() => setIsModalOpen(true)} className="w-full flex items-center gap-3 bg-[#161616] border border-gray-800 hover:border-orange-500/50 hover:bg-[#1a1a1a] px-6 py-4 rounded-3xl transition-all group shadow-xl">
+                <div className="bg-orange-600 p-2 rounded-xl text-white group-hover:scale-110 transition-transform"><Plus size={20}/></div>
+                <div className="text-left">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 leading-none mb-1">Neuzugang</p>
+                    <p className="text-sm font-black text-white italic tracking-tighter uppercase">Artikel zum Inventar hinzufügen</p>
+                </div>
+            </button>
         </div>
 
         {filteredItems.length === 0 ? (
@@ -413,7 +424,7 @@ export default function App() {
                     })}
                 </div>
             ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 pb-12">
                     {filteredItems.map(item => {
                         const isCritical = item.quantity <= item.minStock;
                         return (
@@ -442,17 +453,6 @@ export default function App() {
                     })}
                 </div>
             )}
-            
-            {/* Hinzufügen Button am Ende der Liste */}
-            <div className="mt-8 mb-12 flex justify-center">
-                <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-3 bg-[#161616] border border-gray-800 hover:border-orange-500/50 hover:bg-[#1a1a1a] px-8 py-5 rounded-[2rem] transition-all group shadow-2xl">
-                    <div className="bg-orange-600 p-2 rounded-xl text-white group-hover:scale-110 transition-transform"><Plus size={24}/></div>
-                    <div className="text-left">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 leading-none mb-1">Inventar erweitern</p>
-                        <p className="text-lg font-black text-white italic tracking-tighter uppercase">Neuen Artikel erfassen</p>
-                    </div>
-                </button>
-            </div>
             </>
         )}
       </main>
@@ -462,7 +462,15 @@ export default function App() {
         <div className="fixed inset-0 bg-black/95 z-50 p-4 flex items-center justify-center backdrop-blur-xl animate-in fade-in duration-300">
           <div className="bg-[#161616] w-full max-w-2xl rounded-[2.5rem] border border-orange-500/10 shadow-2xl flex flex-col max-h-[90vh]">
             <div className="p-8 border-b border-gray-800 flex justify-between items-center"><div className="flex items-center gap-3"><ShieldCheck className="text-orange-500" size={24} /><div><h2 className="text-xl font-black uppercase italic tracking-tighter leading-tight text-white">Admin Control</h2><p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Vereins-Stammdaten</p></div></div><button onClick={() => setIsAdminPanelOpen(false)} className="bg-gray-800 p-3 rounded-2xl hover:bg-gray-700"><X size={20}/></button></div>
-            <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar"><button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl"><FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)</button><div className="space-y-4 pt-4 border-t border-gray-800"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3><form onSubmit={async (e) => { e.preventDefault(); const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName, role: 'member', isInitialized: false }); setNewMemberName({ first: '', last: '' }); }} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} /><input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} /><button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button></form></div><div className="space-y-4 pb-4"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3><div className="grid gap-2">{members.map(m => (<div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all"><div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div><div className="flex gap-2">{m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}{m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Löschen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}</div></div>))}</div></div></div>
+            <div className="p-8 overflow-y-auto space-y-8 flex-1 custom-scrollbar"><button onClick={exportToExcel} className="w-full bg-green-600/10 border border-green-600/30 p-5 rounded-2xl flex items-center justify-center gap-3 text-green-500 uppercase font-black text-xs hover:bg-green-600/20 transition-all shadow-xl"><FileSpreadsheet size={24} /> Bestandsliste Exportieren (CSV)</button><div className="space-y-4 pt-4 border-t border-gray-800"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><PlusCircle size={14}/> Mitglied einladen</h3><form onSubmit={async (e) => { e.preventDefault(); const fullName = `${newMemberName.first.trim()} ${newMemberName.last.trim()}`; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName, role: 'member', isInitialized: false }); setNewMemberName({ first: '', last: '' }); }} className="grid grid-cols-1 sm:grid-cols-3 gap-2"><input required placeholder="Vorname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} /><input required placeholder="Nachname" className="bg-black p-4 rounded-2xl border border-gray-800 text-sm outline-none focus:border-orange-500" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} /><button type="submit" className="bg-orange-600 p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-orange-500 transition-all shadow-lg active:scale-95">Erfassen</button></form></div><div className="space-y-4 pb-4"><h3 className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-2 px-1"><Users size={14}/> Mitgliederverwaltung</h3><div className="grid gap-2">{members.map(m => (
+                    <div key={m.id} className="bg-black/40 p-4 rounded-2xl border border-gray-800 flex justify-between items-center group hover:border-orange-500/20 transition-all">
+                      <div><p className="font-bold text-sm text-white">{m.fullName}</p><p className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${m.isInitialized ? 'bg-green-600/10 text-green-500' : 'bg-yellow-600/10 text-yellow-500'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet auf Login'}</p></div>
+                      <div className="flex gap-2">
+                        {m.fullName !== 'Raphael Drago' && <button onClick={async () => await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id), { role: m.role === 'admin' ? 'member' : 'admin' })} className={`p-2.5 rounded-xl transition-all shadow-lg ${m.role === 'admin' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-600 hover:text-orange-500'}`}><ShieldCheck size={18} /></button>}
+                        {m.fullName !== 'Raphael Drago' && <button onClick={async () => { if(confirm('Löschen?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id)) }} className="p-2.5 rounded-xl bg-gray-800 text-gray-600 hover:text-red-500 transition-all shadow-lg"><Trash2 size={18} /></button>}
+                      </div>
+                    </div>
+                  ))}</div></div></div>
           </div>
         </div>
       )}
