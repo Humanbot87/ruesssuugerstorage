@@ -31,10 +31,10 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// appId v2
+// appId v2 für saubere Datenstruktur
 const appId = "ruess-suuger-storage-v2";
 
-const apiKey = ""; // Gemini API Key
+const apiKey = ""; // Gemini API Key wird automatisch injiziert
 
 export default function App() {
   const [items, setItems] = useState([]);
@@ -44,7 +44,7 @@ export default function App() {
   const [members, setMembers] = useState([]); 
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiRecommendationLoading, setAiRecommendationLoading] = useState(null); // Item ID being analyzed
+  const [aiRecommendationLoading, setAiRecommendationLoading] = useState(null); 
   const [authStep, setAuthStep] = useState('identify'); 
   const [authForm, setAuthForm] = useState({ firstName: '', lastName: '', password: '' });
   const [authError, setAuthError] = useState('');
@@ -104,23 +104,20 @@ export default function App() {
     setAuthError('');
     const fullName = `${authForm.firstName.trim()} ${authForm.lastName.trim()}`;
     
-    // Zuerst prüfen, ob das Mitglied existiert
+    // Prüfen, ob das Mitglied bereits in der Registry existiert
     const existingMember = members.find(m => m.fullName.toLowerCase() === fullName.toLowerCase());
 
     if (existingMember) {
       setTargetMember(existingMember);
-      // Wenn das Mitglied bereits initialisiert ist, gehe zum Login
       if (existingMember.isInitialized) {
-        setAuthStep('login');
+        setAuthStep('login'); // Normaler Login, da Passwort bereits gesetzt wurde
       } else {
-        // Wenn es auf der Liste steht, aber noch kein Passwort hat
-        setAuthStep('setup_password');
+        setAuthStep('setup_password'); // Erst-Login zum Passwort setzen
       }
     } else {
-      // Wenn das Mitglied NICHT auf der Liste steht
+      // Sonderfall für Raphael Drago, falls er noch gar nicht in der Registry steht
       const isMainAdmin = fullName.toLowerCase() === 'raphael drago';
       if (isMainAdmin) {
-        // Falls Raphael Drago noch gar nicht in der Datenbank steht (Initialer Setup)
         setTargetMember({ fullName: 'Raphael Drago', role: 'admin', isInitialized: false });
         setAuthStep('setup_password');
       } else {
@@ -152,12 +149,11 @@ export default function App() {
     }
   };
 
-  // Protokoll-Funktion für Bestandsänderungen
   const logMovement = async (itemId, type, diff) => {
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemId);
     const logEntry = {
       user: user.displayName,
-      action: type, // 'entnommen', 'ausgelegt', 'ausgeliehen', 'zurückgebracht'
+      action: type,
       amount: Math.abs(diff),
       timestamp: new Date().toISOString()
     };
@@ -167,19 +163,16 @@ export default function App() {
     else if (type === 'zurückgebracht') actionText = `${user.displayName} hat ${logEntry.amount} Stk. zurückgebracht`;
     else actionText = `${user.displayName} hat ${logEntry.amount} Stk. ${type}`;
 
-    const updatePayload = {
+    await updateDoc(itemRef, {
       updatedBy: user.displayName,
       updatedAt: new Date().toISOString(),
       lastAction: actionText,
       history: arrayUnion(logEntry)
-    };
-
-    await updateDoc(itemRef, updatePayload);
+    });
   };
 
   const updateQty = async (item, delta, specificType = null) => {
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id);
-    
     let newQty = item.quantity;
     let newBorrowed = item.borrowedQuantity || 0;
 
@@ -193,16 +186,11 @@ export default function App() {
         newQty = Math.max(0, item.quantity + delta);
     }
 
-    await updateDoc(itemRef, { 
-      quantity: newQty,
-      borrowedQuantity: newBorrowed
-    });
-    
+    await updateDoc(itemRef, { quantity: newQty, borrowedQuantity: newBorrowed });
     let type = specificType || (delta > 0 ? 'ausgelegt' : 'entnommen');
     await logMovement(item.id, type, delta === 0 ? 1 : delta);
   };
 
-  // KI Funktion für Mindestmengen-Empfehlung
   const recommendMinStockWithAI = async (item) => {
     setAiRecommendationLoading(item.id);
     try {
@@ -305,7 +293,7 @@ export default function App() {
                 <p className="text-xs text-orange-500 font-bold text-center mb-4 uppercase tracking-tighter">Hallo {targetMember.fullName}</p>
                 <div className="relative">
                   <KeyRound className="absolute left-4 top-4 text-gray-700" size={18} />
-                  <input required autoFocus type="password" placeholder={authStep === 'setup_password' ? "Neues Passwort wählen" : "Passwort eingeben"} className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
+                  <input required autoFocus type="password" placeholder={authStep === 'setup_password' ? "Wähle ein neues Passwort" : "Passwort eingeben"} className="w-full bg-black border border-orange-500/50 rounded-2xl p-4 pl-12 text-white outline-none" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
                 </div>
               </div>
             )}
@@ -344,7 +332,6 @@ export default function App() {
           </div>
           
           <div className="space-y-3">
-            {/* Status Filter Tabs */}
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
                 <button 
                     onClick={() => setFilterType('All')} 
@@ -366,7 +353,6 @@ export default function App() {
                 </button>
             </div>
 
-            {/* Location Filter */}
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
               {['All', 'Bastelraum', 'Archivraum'].map(loc => (
                 <button key={loc} onClick={() => setFilterLocation(loc)} className={`px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-tighter border transition-all whitespace-nowrap ${filterLocation === loc ? 'bg-orange-600/20 border-orange-500/50 text-orange-500' : 'bg-gray-800/20 border-gray-800/50 text-gray-600 hover:text-gray-400'}`}>{loc === 'All' ? 'Alle Räume' : loc}</button>
@@ -414,7 +400,6 @@ export default function App() {
                         </div>
                         <p className="text-[9px] text-gray-600 font-bold uppercase tracking-widest mb-4 italic">{item.location}</p>
                         
-                        {/* Mengen Control */}
                         <div className="flex items-center justify-between bg-black/40 p-4 rounded-2xl border border-gray-800/50 shadow-inner">
                             <button onClick={() => updateQty(item, -1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Minus size={18}/></button>
                             <div className="text-center">
@@ -424,7 +409,6 @@ export default function App() {
                             <button onClick={() => updateQty(item, 1)} className="w-10 h-10 flex items-center justify-center bg-gray-800 rounded-xl hover:bg-gray-700 transition-colors shadow-lg"><Plus size={18}/></button>
                         </div>
 
-                        {/* Ausleih Control */}
                         <div className="grid grid-cols-2 gap-2 mt-3">
                             <button 
                                 onClick={() => updateQty(item, 0, 'ausgeliehen')}
@@ -442,7 +426,6 @@ export default function App() {
                             </button>
                         </div>
                         
-                        {/* Status & AI Empfehlung */}
                         <div className="mt-4 pt-3 border-t border-gray-800/50">
                             <div className="flex items-center justify-between mb-1">
                                 <div className="flex items-center gap-2 text-[8px] font-black uppercase text-gray-500">
