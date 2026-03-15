@@ -180,6 +180,17 @@ export default function App() {
     } catch (err) { setAuthError("Passwort falsch oder Fehler."); } finally { setIsAuthChecking(false); }
   };
 
+  const handleImageChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setNewItem(prev => ({ ...prev, image: ev.target.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
   const updateQty = async (item, delta, specificType = null) => {
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id);
     let nQ = item.quantity || 0;
@@ -201,16 +212,28 @@ export default function App() {
       if (existing) {
         const added = parseInt(newItem.quantity) || 0;
         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', existing.id), {
-          quantity: (existing.quantity || 0) + added, history: arrayUnion({ user: user.displayName, action: 'Bestand addiert', amount: added, timestamp: new Date().toISOString() })
+          quantity: (existing.quantity || 0) + added, 
+          updatedAt: new Date().toISOString(),
+          updatedBy: user.displayName,
+          history: arrayUnion({ user: user.displayName, action: 'Bestand addiert', amount: added, timestamp: new Date().toISOString() })
         });
       } else {
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), {
-          ...newItem, name: trimmed, tags: newItem.tags.split(',').map(t => t.trim()).filter(t => t), quantity: parseInt(newItem.quantity) || 0, minStock: parseInt(newItem.minStock) || 0, borrowedQuantity: 0, updatedBy: user.displayName, updatedAt: new Date().toISOString()
+          ...newItem, 
+          name: trimmed, 
+          tags: newItem.tags.split(',').map(t => t.trim()).filter(t => t), 
+          quantity: parseInt(newItem.quantity) || 0, 
+          minStock: parseInt(newItem.minStock) || 0, 
+          borrowedQuantity: 0, 
+          updatedBy: user.displayName, 
+          updatedAt: new Date().toISOString()
         });
       }
       setIsModalOpen(false);
       setNewItem({ name: '', quantity: 1, minStock: 5, location: 'Bastelraum', unit: 'Stk.', tags: '', image: null });
-    } catch (e) {} finally { setIsSaving(false); }
+    } catch (e) {
+      console.error("Save error:", e);
+    } finally { setIsSaving(false); }
   };
 
   const filteredItems = useMemo(() => {
@@ -320,7 +343,7 @@ export default function App() {
                 <div className="p-4 flex-1 min-w-0">
                   <div className="flex justify-between items-start">
                     <h3 className="font-bold text-white truncate leading-tight uppercase tracking-tight">{item.name}</h3>
-                    {viewMode === 'grid' && <button onClick={() => setItemToDelete(item)} className="text-gray-700 hover:text-red-500"><Trash2 size={14}/></button>}
+                    {viewMode === 'grid' && <button onClick={() => setItemToDelete(item)} className="text-gray-800 hover:text-red-500"><Trash2 size={14}/></button>}
                   </div>
                   <p className="text-[9px] text-gray-600 font-bold uppercase mb-2">{item.location}</p>
                   
@@ -384,7 +407,15 @@ export default function App() {
             <form onSubmit={handleSaveItem} className="space-y-6">
               <div onClick={() => fileInputRef.current.click()} className="h-40 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex items-center justify-center relative cursor-pointer group">
                 {newItem.image ? <img src={newItem.image} className="w-full h-full object-cover rounded-3xl" /> : <Camera className="text-gray-800 group-hover:text-orange-500 transition-colors" size={32} />}
-                <input type="file" ref={fileInputRef} hidden accept="image/*" onChange={e => { const r = new FileReader(); r.onload = ev => setNewItem({...newItem, image: ev.target.result}); r.readAsDataURL(e.target.files[0]); }} />
+                {/* Fixed Camera Integration for Mobile */}
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  hidden 
+                  accept="image/*" 
+                  capture="environment" // Trigger mobile camera directly
+                  onChange={handleImageChange} 
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] text-gray-600 font-bold uppercase tracking-widest ml-1">Bezeichnung</label>
