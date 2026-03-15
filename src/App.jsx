@@ -78,8 +78,8 @@ export default function App() {
 
   // UI State
   const [viewMode, setViewMode] = useState('grid');
-  const [activeTab, setActiveTab] = useState('ALLE'); // ALLE, BASTELRAUM, ARCHIV, IN GEBRAUCH, BESORGEN
-  const [activeNav, setActiveNav] = useState('INVENTAR'); // INVENTAR, SUCHE, EXPORT
+  const [activeTab, setActiveTab] = useState('ALLE'); 
+  const [activeNav, setActiveNav] = useState('INVENTAR'); 
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
@@ -99,7 +99,7 @@ export default function App() {
 
   const [newMemberName, setNewMemberName] = useState({ first: '', last: '' });
 
-  // 1. Authentifizierung & Nutzer-Sync
+  // 1. Authentifizierung
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       try {
@@ -180,13 +180,42 @@ export default function App() {
     } catch (err) { setAuthError("Passwort falsch oder Fehler."); } finally { setIsAuthChecking(false); }
   };
 
+  // --- Foto Kompression ---
   const handleImageChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      setNewItem(prev => ({ ...prev, image: ev.target.result }));
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_SIZE = 800; // Maximale Auflösung für Cloud-Speicher
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // JPEG mit 60% Qualität -> Spart Platz, erhält Details
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        setNewItem(prev => ({ ...prev, image: dataUrl }));
+      };
+      img.src = event.target.result;
     };
     reader.readAsDataURL(file);
   };
@@ -221,7 +250,7 @@ export default function App() {
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), {
           ...newItem, 
           name: trimmed, 
-          tags: newItem.tags.split(',').map(t => t.trim()).filter(t => t), 
+          tags: newItem.tags ? newItem.tags.split(',').map(t => t.trim()).filter(t => t) : [], 
           quantity: parseInt(newItem.quantity) || 0, 
           minStock: parseInt(newItem.minStock) || 0, 
           borrowedQuantity: 0, 
@@ -255,7 +284,7 @@ export default function App() {
       <div className="w-full max-w-sm bg-[#121212] p-8 rounded-[2.5rem] border border-gray-800 shadow-2xl">
         <div className="text-center mb-8">
           <Package className="mx-auto text-orange-500 mb-4" size={48} />
-          <h1 className="text-2xl font-black uppercase italic tracking-tighter"><span className="text-gray-500">Rüss</span><span className="text-orange-500">Suuger</span></h1>
+          <h1 className="text-2xl font-black uppercase italic tracking-tighter leading-none"><span className="text-gray-500">Rüss</span><span className="text-orange-500">Suuger</span></h1>
         </div>
         <form onSubmit={authStep === 'identify' ? handleIdentify : handleAuthAction} className="space-y-4">
           {authStep === 'identify' ? (
@@ -319,7 +348,7 @@ export default function App() {
           <div className="mb-6 animate-in slide-in-from-top-2 duration-300">
             <div className="relative">
               <Search className="absolute left-4 top-3.5 text-gray-600" size={18} />
-              <input autoFocus type="text" placeholder="Gegenstand suchen..." className="w-full bg-[#121212] p-4 pl-12 rounded-2xl border border-gray-800 outline-none focus:border-orange-500 text-white" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+              <input autoFocus type="text" placeholder="Gegenstand suchen..." className="w-full bg-[#121212] p-4 pl-12 rounded-2xl border border-gray-800 outline-none focus:border-orange-500 text-white shadow-inner" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
             </div>
           </div>
         )}
@@ -337,7 +366,7 @@ export default function App() {
                 <div className={viewMode === 'list' ? "w-14 h-14 rounded-xl overflow-hidden bg-black shrink-0" : "h-40 bg-black relative"}>
                   {item.image ? <img src={item.image} className="w-full h-full object-cover" /> : <ImageIcon className="m-auto text-gray-900" size={viewMode === 'list' ? 24 : 48} />}
                   {viewMode === 'grid' && (item.quantity <= (item.minStock || 0)) && (
-                    <div className="absolute top-3 left-3 bg-red-600 text-white text-[8px] font-black px-2 py-1 rounded-full uppercase">Mangel</div>
+                    <div className="absolute top-3 left-3 bg-red-600 text-white text-[8px] font-black px-2 py-1 rounded-full uppercase shadow-lg">Mangel</div>
                   )}
                 </div>
                 <div className="p-4 flex-1 min-w-0">
@@ -379,7 +408,7 @@ export default function App() {
           <span className="text-[8px] font-bold uppercase tracking-widest">Suche</span>
         </button>
         
-        {/* Large Add Button */}
+        {/* Foto Button */}
         <div className="relative -mt-12">
           <button onClick={() => setIsModalOpen(true)} className="w-16 h-16 bg-orange-600 rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(234,88,12,0.4)] border-4 border-[#080808] active:scale-90 transition-all text-black">
             <Camera size={28} />
@@ -405,93 +434,102 @@ export default function App() {
               <button onClick={() => setIsModalOpen(false)} className="bg-gray-800 p-2 rounded-full text-gray-400"><X size={20}/></button>
             </div>
             <form onSubmit={handleSaveItem} className="space-y-6">
-              <div onClick={() => fileInputRef.current.click()} className="h-40 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex items-center justify-center relative cursor-pointer group">
-                {newItem.image ? <img src={newItem.image} className="w-full h-full object-cover rounded-3xl" /> : <Camera className="text-gray-800 group-hover:text-orange-500 transition-colors" size={32} />}
-                {/* Fixed Camera Integration for Mobile */}
+              <div onClick={() => fileInputRef.current.click()} className="h-40 bg-black rounded-3xl border-2 border-dashed border-gray-800 flex items-center justify-center relative cursor-pointer group overflow-hidden">
+                {newItem.image ? <img src={newItem.image} className="w-full h-full object-cover" /> : <div className="text-center"><Camera className="mx-auto text-gray-800 mb-2 group-hover:text-orange-500 transition-colors" size={32} /><p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">Foto aufnehmen</p></div>}
                 <input 
                   type="file" 
                   ref={fileInputRef} 
                   hidden 
                   accept="image/*" 
-                  capture="environment" // Trigger mobile camera directly
+                  capture="environment"
                   onChange={handleImageChange} 
                 />
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] text-gray-600 font-bold uppercase tracking-widest ml-1">Bezeichnung</label>
-                <input required className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none focus:border-orange-500" placeholder="Name..." value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
+                <input required className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none focus:border-orange-500 shadow-inner" placeholder="Name..." value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
               </div>
+              
+              {/* Gleichkrosse Felder für Bestand und Warn-Limit */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] text-gray-600 font-bold uppercase tracking-widest ml-1">Bestand</label>
-                  <input type="number" className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
+                  <input type="number" className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.quantity} onChange={e => setNewItem({...newItem, quantity: e.target.value})} />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] text-gray-600 font-bold uppercase tracking-widest ml-1">Warn-Limit</label>
-                  <input type="number" className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
+                  <input type="number" className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none focus:border-orange-500 shadow-inner" value={newItem.minStock} onChange={e => setNewItem({...newItem, minStock: e.target.value})} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <select className="bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none text-xs" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})}>
-                  {UNITS.map(u => <option key={u} value={u} className="bg-[#121212]">{u}</option>)}
-                </select>
-                <div className="grid grid-cols-2 gap-1">
-                  <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`rounded-xl text-[8px] font-black uppercase transition-all ${newItem.location === 'Bastelraum' ? 'bg-orange-500 text-black' : 'bg-gray-900 text-gray-600'}`}>Bastelraum</button>
-                  <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`rounded-xl text-[8px] font-black uppercase transition-all ${newItem.location === 'Archivraum' ? 'bg-orange-500 text-black' : 'bg-gray-900 text-gray-600'}`}>Archiv</button>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                   <label className="text-[10px] text-gray-600 font-bold uppercase tracking-widest ml-1">Einheit</label>
+                   <select className="w-full bg-black border border-gray-800 rounded-2xl p-4 text-white outline-none focus:border-orange-500 shadow-inner text-sm" value={newItem.unit} onChange={e => setNewItem({...newItem, unit: e.target.value})}>
+                     {UNITS.map(u => <option key={u} value={u} className="bg-[#121212]">{u}</option>)}
+                   </select>
+                </div>
+                <div className="space-y-2">
+                   <label className="text-[10px] text-gray-600 font-bold uppercase tracking-widest ml-1">Standort</label>
+                   <div className="grid grid-cols-2 gap-1 h-[54px]">
+                    <button type="button" onClick={() => setNewItem({...newItem, location: 'Bastelraum'})} className={`rounded-xl text-[8px] font-black uppercase transition-all flex items-center justify-center ${newItem.location === 'Bastelraum' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-600'}`}>Bastel</button>
+                    <button type="button" onClick={() => setNewItem({...newItem, location: 'Archivraum'})} className={`rounded-xl text-[8px] font-black uppercase transition-all flex items-center justify-center ${newItem.location === 'Archivraum' ? 'bg-orange-500 text-black' : 'bg-gray-900 text-gray-600'}`}>Archiv</button>
+                   </div>
                 </div>
               </div>
-              <button type="submit" disabled={isSaving} className="w-full bg-orange-600 p-5 rounded-3xl font-black uppercase text-white shadow-xl">
-                {isSaving ? 'Lädt...' : 'Speichern'}
+
+              <button type="submit" disabled={isSaving} className="w-full bg-orange-600 p-5 rounded-3xl font-black uppercase text-white shadow-xl active:scale-95 transition-all">
+                {isSaving ? 'Wird gespeichert...' : 'Artikel Speichern'}
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Modal: Admin Panel */}
+      {/* Admin Panel Modal */}
       {isAdminPanelOpen && (
         <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-6">
-          <div className="w-full max-w-md bg-[#121212] rounded-[3rem] p-8 border border-gray-800 shadow-2xl max-h-[80vh] flex flex-col">
+          <div className="w-full max-w-md bg-[#121212] rounded-[3rem] p-8 border border-gray-800 shadow-2xl max-h-[80vh] flex flex-col no-scrollbar">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Member List</h2>
+              <h2 className="text-xl font-black uppercase italic tracking-tighter text-white">Stammdaten</h2>
               <button onClick={() => setIsAdminPanelOpen(false)} className="bg-gray-800 p-2 rounded-full text-gray-400"><X size={20}/></button>
             </div>
             <div className="flex-1 overflow-y-auto space-y-4 no-scrollbar">
                <div className="bg-orange-600/5 p-4 rounded-3xl border border-orange-500/10 mb-4">
-                  <h3 className="text-[10px] font-black uppercase text-orange-500 mb-3">Neu erfassen</h3>
+                  <h3 className="text-[10px] font-black uppercase text-orange-500 mb-3">Mitglied hinzufügen</h3>
                   <div className="flex gap-2">
-                    <input className="flex-1 bg-black border border-gray-800 rounded-xl p-3 text-xs" placeholder="Vorname" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} />
-                    <input className="flex-1 bg-black border border-gray-800 rounded-xl p-3 text-xs" placeholder="Nachname" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} />
-                    <button onClick={async () => { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName: `${newMemberName.first} ${newMemberName.last}`, isInitialized: false, role: 'member' }); setNewMemberName({first:'', last:''}); }} className="bg-orange-600 p-3 rounded-xl text-black font-black"><Plus size={16}/></button>
+                    <input className="flex-1 bg-black border border-gray-800 rounded-xl p-3 text-xs outline-none" placeholder="Vorname" value={newMemberName.first} onChange={e => setNewMemberName({...newMemberName, first: e.target.value})} />
+                    <input className="flex-1 bg-black border border-gray-800 rounded-xl p-3 text-xs outline-none" placeholder="Nachname" value={newMemberName.last} onChange={e => setNewMemberName({...newMemberName, last: e.target.value})} />
+                    <button onClick={async () => { if(!newMemberName.first || !newMemberName.last) return; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'member_registry'), { fullName: `${newMemberName.first} ${newMemberName.last}`, isInitialized: false, role: 'member' }); setNewMemberName({first:'', last:''}); }} className="bg-orange-600 p-3 rounded-xl text-black font-black active:scale-90 transition-all"><Plus size={16}/></button>
                   </div>
                </div>
-               {members.map(m => (
-                 <div key={m.id} className="bg-black/40 p-4 rounded-2xl flex justify-between items-center border border-gray-900">
+               {(members || []).map(m => (
+                 <div key={m.id} className="bg-black/40 p-4 rounded-2xl flex justify-between items-center border border-gray-900 group">
                     <div>
-                      <p className="font-bold text-sm text-white">{m.fullName}</p>
-                      <p className={`text-[8px] font-bold uppercase ${m.isInitialized ? 'text-green-500' : 'text-gray-600'}`}>{m.isInitialized ? 'Aktiv' : 'Wartet'}</p>
+                      <p className="font-bold text-sm text-white">{m?.fullName || "Unbekannt"}</p>
+                      <p className={`text-[8px] font-bold uppercase ${m?.isInitialized ? 'text-green-500' : 'text-gray-600'}`}>{m?.isInitialized ? 'Aktiv' : 'Wartet'}</p>
                     </div>
-                    {m.fullName !== 'Raphael Drago' && (
-                      <button onClick={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id))} className="text-gray-700 hover:text-red-500"><Trash2 size={16}/></button>
+                    {m?.fullName !== 'Raphael Drago' && (
+                      <button onClick={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'member_registry', m.id))} className="text-gray-700 hover:text-red-500 transition-all"><Trash2 size={16}/></button>
                     )}
                  </div>
                ))}
-               <button onClick={() => signOut(auth)} className="w-full mt-4 p-4 rounded-2xl bg-gray-900 text-red-500 font-bold uppercase text-[10px] flex items-center justify-center gap-2"><LogOut size={14}/> Logout</button>
+               <button onClick={() => signOut(auth)} className="w-full mt-4 p-4 rounded-2xl bg-gray-900 text-red-500 font-bold uppercase text-[10px] flex items-center justify-center gap-2 hover:bg-red-950 transition-all"><LogOut size={14}/> Abmelden</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete Item Confirm */}
+      {/* Delete Confirmation */}
       {itemToDelete && (
         <div className="fixed inset-0 bg-black/98 z-[60] flex items-center justify-center p-6 animate-in zoom-in-95">
-          <div className="bg-[#121212] p-8 rounded-[2.5rem] border border-red-900/30 text-center max-w-xs shadow-2xl">
+          <div className="bg-[#121212] p-10 rounded-[3rem] border border-red-900/30 text-center max-w-xs shadow-2xl">
             <AlertTriangle className="mx-auto text-red-500 mb-4" size={48} />
             <h3 className="text-white font-black uppercase italic text-lg mb-2">Entfernen?</h3>
-            <p className="text-gray-500 text-xs mb-8">"{itemToDelete.name}" endgültig löschen?</p>
+            <p className="text-gray-500 text-xs mb-8 leading-relaxed">Sicher? "{itemToDelete.name}" wird endgültig aus der Cloud gelöscht.</p>
             <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => setItemToDelete(null)} className="bg-gray-900 p-4 rounded-2xl font-bold text-gray-500">Nein</button>
-              <button onClick={async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id)); setItemToDelete(null); }} className="bg-red-600 p-4 rounded-2xl font-bold text-white">Ja</button>
+              <button onClick={() => setItemToDelete(null)} className="bg-gray-900 py-4 rounded-2xl font-bold text-gray-500 uppercase text-[10px]">Nein</button>
+              <button onClick={async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', itemToDelete.id)); setItemToDelete(null); }} className="bg-red-600 py-4 rounded-2xl font-bold text-white uppercase text-[10px]">Löschen</button>
             </div>
           </div>
         </div>
